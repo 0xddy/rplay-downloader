@@ -37,12 +37,8 @@
 
 ## 📸 预览
 
-<details>
-<summary>点击查看界面截图</summary>
+![screenshot](/screemshot/main-screenshot.png "screenshot")
 
-> ./screemshot/main-screenshot.png
-
-</details>
 ## ⚠️ 免责声明
 
 本扩展仅供学习交流使用，请勿用于商业用途。下载视频前请确保你拥有相应的权利。
@@ -52,4 +48,5 @@
 ---
 
 如果觉得这个项目有帮助，请给个 ⭐ Star 支持一下！
+
 
