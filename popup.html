@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RPlay Video Downloader</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 450px;
+      min-height: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #f8fafc 0%, #e8f4f8 100%);
+      color: #1e293b;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #0099ff 0%, #0066cc 50%, #004c99 100%);
+      padding: 24px 20px;
+      text-align: center;
+      box-shadow: 0 8px 24px rgba(0, 153, 255, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+      animation: pulse 4s ease-in-out infinite;
+    }
+
+    .header::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: 
+        linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%);
+      background-size: 200% 200%;
+      animation: shimmerMove 3s linear infinite;
+    }
+
+    /* 添加科技感的装饰线条 */
+    .header .tech-lines {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow: hidden;
+      opacity: 0.3;
+    }
+
+    .header .tech-line {
+      position: absolute;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+      animation: techLineMove 3s ease-in-out infinite;
+    }
+
+    .header .tech-line:nth-child(1) {
+      top: 20%;
+      width: 60%;
+      left: -60%;
+      animation-delay: 0s;
+    }
+
+    .header .tech-line:nth-child(2) {
+      top: 50%;
+      width: 80%;
+      left: -80%;
+      animation-delay: 1s;
+    }
+
+    .header .tech-line:nth-child(3) {
+      top: 80%;
+      width: 50%;
+      left: -50%;
+      animation-delay: 2s;
+    }
+
+    @keyframes pulse {
+      0%, 100% { 
+        transform: scale(1) rotate(0deg); 
+        opacity: 0.3; 
+      }
+      50% { 
+        transform: scale(1.1) rotate(180deg); 
+        opacity: 0.5; 
+      }
+    }
+
+    @keyframes shimmerMove {
+      0% { background-position: -200% -200%; }
+      100% { background-position: 200% 200%; }
+    }
+
+    @keyframes techLineMove {
+      0% { left: -100%; opacity: 0; }
+      50% { opacity: 1; }
+      100% { left: 100%; opacity: 0; }
+    }
+
+    .header h1 {
+      font-size: 20px;
+      color: white;
+      margin-bottom: 6px;
+      font-weight: 700;
+      position: relative;
+      z-index: 1;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      letter-spacing: 0.5px;
+    }
+
+    .header p {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.95);
+      position: relative;
+      z-index: 1;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    }
+
+    .container {
+      padding: 20px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #64748b;
+    }
+
+    .empty-state svg {
+      margin-bottom: 15px;
+      opacity: 0.7;
+      filter: drop-shadow(0 2px 4px rgba(0, 153, 255, 0.2));
+    }
+
+    .empty-state h2 {
+      font-size: 16px;
+      margin-bottom: 10px;
+      color: #0099ff;
+      font-weight: 600;
+    }
+
+    .empty-state p {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #64748b;
+    }
+
+    .video-list {
+      max-height: 400px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    
+    /* 隐藏滚动条但保持功能 */
+    .video-list::-webkit-scrollbar {
+      display: none;
+    }
+    
+    .video-list {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+
+    .video-item {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 15px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      border: 2px solid #e2e8f0;
+      transition: all 0.3s ease;
+    }
+
+    .video-item:hover {
+      border-color: #0099ff;
+      box-shadow: 0 4px 16px rgba(0, 153, 255, 0.15);
+    }
+
+    .video-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e8f4f8;
+    }
+
+    .video-title {
+      font-weight: 700;
+      color: #0099ff;
+      font-size: 14px;
+    }
+
+    .video-time {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .stream-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      margin-bottom: 8px;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      transition: all 0.2s;
+    }
+
+    .stream-option:hover {
+      background: #e8f4f8;
+      border-color: #0099ff;
+      transform: translateX(3px);
+    }
+
+    .stream-info {
+      flex: 1;
+    }
+
+    .resolution {
+      font-weight: 600;
+      color: #1e293b;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .bandwidth {
+      font-size: 11px;
+      color: #64748b;
+    }
+
+    .download-btn {
+      background: linear-gradient(135deg, #0099ff 0%, #0066cc 100%);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: all 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      box-shadow: 0 2px 8px rgba(0, 153, 255, 0.3);
+    }
+
+    .download-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 153, 255, 0.4);
+    }
+
+    .download-btn:active {
+      transform: translateY(0);
+    }
+
+    .download-btn:disabled {
+      background: #cbd5e1;
+      color: #94a3b8;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .progress-container {
+      margin-top: 12px;
+      margin-bottom: 12px;
+      padding: 14px;
+      background: #e8f4f8;
+      border-radius: 8px;
+      border: 2px solid #b3d9ff;
+      display: none;
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: all 0.3s ease;
+    }
+
+    .progress-container.active {
+      display: block;
+      animation: slideDown 0.3s ease forwards;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .progress-text {
+      font-size: 12px;
+      color: #334155;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 500;
+    }
+
+    .speed-text {
+      color: #0099ff;
+      font-weight: 700;
+      margin-right: 8px;
+      font-size: 11px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: white;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);
+      border: 1px solid #cbd5e1;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0099ff 0%, #0066cc 100%);
+      transition: width 0.5s ease;
+      width: 0%;
+      box-shadow: 0 0 8px rgba(0, 153, 255, 0.4);
+      position: relative;
+    }
+
+    .progress-bar::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(90deg, 
+        transparent 0%, 
+        rgba(255, 255, 255, 0.4) 50%, 
+        transparent 100%);
+      animation: shimmer 2s infinite;
+    }
+
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .status-message {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      text-align: center;
+      display: none;
+      border: 2px solid;
+      font-weight: 500;
+    }
+
+    .status-message.success {
+      background: #d1fae5;
+      color: #065f46;
+      border-color: #34d399;
+      display: block;
+    }
+
+    .status-message.error {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #ef4444;
+      display: block;
+    }
+
+    .status-message.warning {
+      background: #fef3c7;
+      color: #92400e;
+      border-color: #fbbf24;
+      display: block;
+    }
+
+    .quality-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-left: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .quality-fhd {
+      background: #8b5cf6;
+      color: white;
+      box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);
+    }
+
+    .quality-hd {
+      background: #0099ff;
+      color: white;
+      box-shadow: 0 2px 4px rgba(0, 153, 255, 0.2);
+    }
+
+    .quality-sd {
+      background: #f59e0b;
+      color: white;
+      box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+    }
+
+    .footer {
+      margin-top: 15px;
+      padding-top: 12px;
+      border-top: 2px solid #e2e8f0;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .footer-text {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 500;
+    }
+
+    .github-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 12px;
+      background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+      border: 1.5px solid #e2e8f0;
+      border-radius: 6px;
+      color: #1e293b;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .github-link:hover {
+      background: linear-gradient(135deg, #0099ff 0%, #0066cc 100%);
+      color: white;
+      border-color: #0099ff;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 153, 255, 0.3);
+    }
+
+    .github-link:hover .star-icon {
+      stroke: #fbbf24;
+      fill: #fbbf24;
+      animation: starPulse 0.6s ease-in-out;
+    }
+
+    .star-icon {
+      transition: all 0.3s ease;
+    }
+
+    @keyframes starPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.3) rotate(15deg); }
+    }
+
+
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="tech-lines">
+      <div class="tech-line"></div>
+      <div class="tech-line"></div>
+      <div class="tech-line"></div>
+    </div>
+    <h1 id="headerTitle">🧿 RPlay Video Downloader</h1>
+    <p id="headerSubtitle">一键下载 rplay.live 视频</p>
+  </div>
+
+  <div class="container">
+    <div id="emptyState" class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#0099ff" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polygon points="10,8 16,12 10,16" fill="#0099ff"/>
+      </svg>
+      <h2 id="noVideoTitle">未检测到视频</h2>
+      <p id="noVideoDesc">请在 rplay.live 网站上打开视频播放页面<br>插件将自动检测可下载的视频</p>
+    </div>
+
+    <div id="videoList" class="video-list" style="display: none;"></div>
+    
+    <div id="statusMessage" class="status-message"></div>
+    
+    <div class="footer">
+      <span class="footer-text" id="footerText">喜欢本插件请给个 Star 吧</span>
+      <a href="https://github.com/0xddy/rplay-downloader" target="_blank" class="github-link">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        <span id="githubText">Github</span>
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" class="star-icon">
+          <polygon points="6,1 7.5,4.5 11,5 8.5,7.5 9,11 6,9 3,11 3.5,7.5 1,5 4.5,4.5" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

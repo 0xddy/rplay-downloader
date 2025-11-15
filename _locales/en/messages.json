@@ -1,0 +1,160 @@
+{
+  "extName": {
+    "message": "RPlay Video Downloader",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "Download videos from rplay.live",
+    "description": "Extension description"
+  },
+  "videoDetected": {
+    "message": "Video Detected",
+    "description": "Video detected notification title"
+  },
+  "streamsFound": {
+    "message": "Found $COUNT$ quality options",
+    "description": "Number of streams found",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "3"
+      }
+    }
+  },
+  "clickToDownload": {
+    "message": "Click extension icon to start download",
+    "description": "Click extension icon to download"
+  },
+  "headerTitle": {
+    "message": "RPlay Video Downloader",
+    "description": "Popup header title"
+  },
+  "headerSubtitle": {
+    "message": "Download rplay.live videos with one click",
+    "description": "Popup header subtitle"
+  },
+  "noVideoDetected": {
+    "message": "No Video Detected",
+    "description": "No video detected message"
+  },
+  "noVideoDescription": {
+    "message": "Please open a video playback page on rplay.live\nThe extension will automatically detect downloadable videos",
+    "description": "No video detected description"
+  },
+  "videoNumber": {
+    "message": "Video #$NUMBER$",
+    "description": "Video number",
+    "placeholders": {
+      "number": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "qualityHigh": {
+    "message": "HD",
+    "description": "High quality badge"
+  },
+  "qualityStandard": {
+    "message": "SD",
+    "description": "Standard quality badge"
+  },
+  "qualityLow": {
+    "message": "LD",
+    "description": "Low quality badge"
+  },
+  "bitrate": {
+    "message": "Bitrate",
+    "description": "Bitrate label"
+  },
+  "unknown": {
+    "message": "Unknown",
+    "description": "Unknown value"
+  },
+  "downloadButton": {
+    "message": "Download",
+    "description": "Download button text"
+  },
+  "downloading": {
+    "message": "Downloading...",
+    "description": "Downloading status"
+  },
+  "preparing": {
+    "message": "Preparing...",
+    "description": "Preparing status"
+  },
+  "downloadingSegments": {
+    "message": "Downloading $COMPLETED$/$TOTAL$ segments",
+    "description": "Downloading segments",
+    "placeholders": {
+      "completed": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "100"
+      }
+    }
+  },
+  "merging": {
+    "message": "Merging segments...",
+    "description": "Merging status"
+  },
+  "converting": {
+    "message": "Converting file...",
+    "description": "Converting status"
+  },
+  "saving": {
+    "message": "Saving file...",
+    "description": "Saving status"
+  },
+  "downloadComplete": {
+    "message": "Download complete! File: $FILENAME$",
+    "description": "Download complete message",
+    "placeholders": {
+      "filename": {
+        "content": "$1",
+        "example": "video.mp4"
+      }
+    }
+  },
+  "timeElapsed": {
+    "message": "Time: $TIME$s",
+    "description": "Time elapsed",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "30.5"
+      }
+    }
+  },
+  "avgSpeed": {
+    "message": "Avg speed: $SPEED$",
+    "description": "Average speed",
+    "placeholders": {
+      "speed": {
+        "content": "$1",
+        "example": "1.5 MB/s"
+      }
+    }
+  },
+  "downloadFailed": {
+    "message": "Download failed: $ERROR$",
+    "description": "Download failed message",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Network error"
+      }
+    }
+  },
+  "footerText": {
+    "message": "Like this extension? Give us a Star",
+    "description": "Footer text"
+  },
+  "github": {
+    "message": "Github",
+    "description": "Github link text"
+  }
+}

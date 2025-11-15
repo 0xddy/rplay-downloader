@@ -1,0 +1,160 @@
+{
+  "extName": {
+    "message": "RPlay Video Downloader",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "下载 rplay.live 网站的视频",
+    "description": "Extension description"
+  },
+  "videoDetected": {
+    "message": "视频已检测",
+    "description": "Video detected notification title"
+  },
+  "streamsFound": {
+    "message": "找到 $COUNT$ 个清晰度选项",
+    "description": "Number of streams found",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "3"
+      }
+    }
+  },
+  "clickToDownload": {
+    "message": "点击插件图标开始下载",
+    "description": "Click extension icon to download"
+  },
+  "headerTitle": {
+    "message": "RPlay Video Downloader",
+    "description": "Popup header title"
+  },
+  "headerSubtitle": {
+    "message": "一键下载 rplay.live 视频",
+    "description": "Popup header subtitle"
+  },
+  "noVideoDetected": {
+    "message": "未检测到视频",
+    "description": "No video detected message"
+  },
+  "noVideoDescription": {
+    "message": "请在 rplay.live 网站上打开视频播放页面\n插件将自动检测可下载的视频",
+    "description": "No video detected description"
+  },
+  "videoNumber": {
+    "message": "视频 #$NUMBER$",
+    "description": "Video number",
+    "placeholders": {
+      "number": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "qualityHigh": {
+    "message": "高清",
+    "description": "High quality badge"
+  },
+  "qualityStandard": {
+    "message": "标清",
+    "description": "Standard quality badge"
+  },
+  "qualityLow": {
+    "message": "低清",
+    "description": "Low quality badge"
+  },
+  "bitrate": {
+    "message": "码率",
+    "description": "Bitrate label"
+  },
+  "unknown": {
+    "message": "未知",
+    "description": "Unknown value"
+  },
+  "downloadButton": {
+    "message": "下载",
+    "description": "Download button text"
+  },
+  "downloading": {
+    "message": "下载中...",
+    "description": "Downloading status"
+  },
+  "preparing": {
+    "message": "准备中...",
+    "description": "Preparing status"
+  },
+  "downloadingSegments": {
+    "message": "下载中 $COMPLETED$/$TOTAL$ 片段",
+    "description": "Downloading segments",
+    "placeholders": {
+      "completed": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "100"
+      }
+    }
+  },
+  "merging": {
+    "message": "合并片段...",
+    "description": "Merging status"
+  },
+  "converting": {
+    "message": "转换文件...",
+    "description": "Converting status"
+  },
+  "saving": {
+    "message": "保存文件...",
+    "description": "Saving status"
+  },
+  "downloadComplete": {
+    "message": "下载完成！文件: $FILENAME$",
+    "description": "Download complete message",
+    "placeholders": {
+      "filename": {
+        "content": "$1",
+        "example": "video.mp4"
+      }
+    }
+  },
+  "timeElapsed": {
+    "message": "耗时: $TIME$秒",
+    "description": "Time elapsed",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "30.5"
+      }
+    }
+  },
+  "avgSpeed": {
+    "message": "平均速度: $SPEED$",
+    "description": "Average speed",
+    "placeholders": {
+      "speed": {
+        "content": "$1",
+        "example": "1.5 MB/s"
+      }
+    }
+  },
+  "downloadFailed": {
+    "message": "下载失败: $ERROR$",
+    "description": "Download failed message",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Network error"
+      }
+    }
+  },
+  "footerText": {
+    "message": "喜欢本插件请给个 Star 吧",
+    "description": "Footer text"
+  },
+  "github": {
+    "message": "Github",
+    "description": "Github link text"
+  }
+}

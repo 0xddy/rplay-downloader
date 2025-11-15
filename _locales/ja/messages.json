@@ -1,0 +1,160 @@
+{
+  "extName": {
+    "message": "RPlay Video Downloader",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "rplay.live ウェブサイトから動画をダウンロード",
+    "description": "Extension description"
+  },
+  "videoDetected": {
+    "message": "動画を検出しました",
+    "description": "Video detected notification title"
+  },
+  "streamsFound": {
+    "message": "$COUNT$個の画質オプションが見つかりました",
+    "description": "Number of streams found",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "3"
+      }
+    }
+  },
+  "clickToDownload": {
+    "message": "拡張機能アイコンをクリックしてダウンロードを開始",
+    "description": "Click extension icon to download"
+  },
+  "headerTitle": {
+    "message": "RPlay Video Downloader",
+    "description": "Popup header title"
+  },
+  "headerSubtitle": {
+    "message": "ワンクリックで rplay.live の動画をダウンロード",
+    "description": "Popup header subtitle"
+  },
+  "noVideoDetected": {
+    "message": "動画が検出されませんでした",
+    "description": "No video detected message"
+  },
+  "noVideoDescription": {
+    "message": "rplay.live ウェブサイトで動画再生ページを開いてください\n拡張機能がダウンロード可能な動画を自動的に検出します",
+    "description": "No video detected description"
+  },
+  "videoNumber": {
+    "message": "動画 #$NUMBER$",
+    "description": "Video number",
+    "placeholders": {
+      "number": {
+        "content": "$1",
+        "example": "1"
+      }
+    }
+  },
+  "qualityHigh": {
+    "message": "高画質",
+    "description": "High quality badge"
+  },
+  "qualityStandard": {
+    "message": "標準画質",
+    "description": "Standard quality badge"
+  },
+  "qualityLow": {
+    "message": "低画質",
+    "description": "Low quality badge"
+  },
+  "bitrate": {
+    "message": "ビットレート",
+    "description": "Bitrate label"
+  },
+  "unknown": {
+    "message": "不明",
+    "description": "Unknown value"
+  },
+  "downloadButton": {
+    "message": "ダウンロード",
+    "description": "Download button text"
+  },
+  "downloading": {
+    "message": "ダウンロード中...",
+    "description": "Downloading status"
+  },
+  "preparing": {
+    "message": "準備中...",
+    "description": "Preparing status"
+  },
+  "downloadingSegments": {
+    "message": "ダウンロード中 $COMPLETED$/$TOTAL$ セグメント",
+    "description": "Downloading segments",
+    "placeholders": {
+      "completed": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "100"
+      }
+    }
+  },
+  "merging": {
+    "message": "セグメントを結合中...",
+    "description": "Merging status"
+  },
+  "converting": {
+    "message": "ファイルを変換中...",
+    "description": "Converting status"
+  },
+  "saving": {
+    "message": "ファイルを保存中...",
+    "description": "Saving status"
+  },
+  "downloadComplete": {
+    "message": "ダウンロード完了！ファイル: $FILENAME$",
+    "description": "Download complete message",
+    "placeholders": {
+      "filename": {
+        "content": "$1",
+        "example": "video.mp4"
+      }
+    }
+  },
+  "timeElapsed": {
+    "message": "所要時間: $TIME$秒",
+    "description": "Time elapsed",
+    "placeholders": {
+      "time": {
+        "content": "$1",
+        "example": "30.5"
+      }
+    }
+  },
+  "avgSpeed": {
+    "message": "平均速度: $SPEED$",
+    "description": "Average speed",
+    "placeholders": {
+      "speed": {
+        "content": "$1",
+        "example": "1.5 MB/s"
+      }
+    }
+  },
+  "downloadFailed": {
+    "message": "ダウンロード失敗: $ERROR$",
+    "description": "Download failed message",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Network error"
+      }
+    }
+  },
+  "footerText": {
+    "message": "この拡張機能が気に入りましたか？Starをお願いします",
+    "description": "Footer text"
+  },
+  "github": {
+    "message": "Github",
+    "description": "Github link text"
+  }
+}
