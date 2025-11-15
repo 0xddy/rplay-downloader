@@ -1,4 +1,4 @@
-# 🎬 RPlay Video Downloader
+# <img src="icon48.png" width=33px/> RPlay Video Downloader
 
 一键下载 rplay.live 视频的浏览器扩展，支持多清晰度选择和实时进度跟踪。
 
@@ -50,6 +50,7 @@
 ---
 
 如果觉得这个项目有帮助，请给个 ⭐ Star 支持一下！
+
 
 
 
