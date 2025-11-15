@@ -40,7 +40,7 @@
 <details>
 <summary>点击查看界面截图</summary>
 
-> 在此添加你的截图
+> ./screemshot/main-screenshot.png
 
 </details>
 ## ⚠️ 免责声明
@@ -52,3 +52,4 @@
 ---
 
 如果觉得这个项目有帮助，请给个 ⭐ Star 支持一下！
+
