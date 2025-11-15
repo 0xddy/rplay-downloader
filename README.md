@@ -37,7 +37,7 @@
 
 ## 📸 预览
 
-![screenshot](/screemshot/main-screenshot.png "screenshot")
+![screenshot](/screenshot/main-screenshot.png "screenshot")
 
 ## ⚠️ 免责声明
 
@@ -48,5 +48,6 @@
 ---
 
 如果觉得这个项目有帮助，请给个 ⭐ Star 支持一下！
+
 
 
