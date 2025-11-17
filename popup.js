@@ -132,7 +132,13 @@ function createVideoItem(video, videoIndex, tabId) {
   videoItem.className = 'video-item';
   videoItem.id = `video-${videoIndex}`;
   
-  const timestamp = new Date(video.timestamp).toLocaleTimeString('zh-CN');
+  // 使用时长或时间戳
+  let displayTime;
+  if (video.duration && video.duration > 0) {
+    displayTime = formatDuration(video.duration);
+  } else {
+    displayTime = new Date(video.timestamp).toLocaleTimeString('zh-CN');
+  }
   
   let streamsHtml = '';
   video.streams.forEach((stream, streamIndex) => {
@@ -157,13 +163,28 @@ function createVideoItem(video, videoIndex, tabId) {
       ? `${(parseInt(stream.bandwidth) / 1000000).toFixed(2)} Mbps` 
       : chrome.i18n.getMessage('unknown');
     
+    // 计算预估文件大小
+    let estimatedSize = '';
+    if (stream.bandwidth && video.duration) {
+      const bandwidthBps = parseInt(stream.bandwidth); // bits per second (峰值)
+      const durationSeconds = video.duration;
+      
+      // 实际码率通常是峰值的 65-70%，这里使用 0.68 作为系数
+      // 因为 HLS 流通常使用 VBR 编码，BANDWIDTH 是峰值而非平均值
+      const actualBandwidth = bandwidthBps * 0.68;
+      
+      const totalBits = actualBandwidth * durationSeconds;
+      const totalBytes = totalBits / 8; // 转换为字节
+      estimatedSize = ` • ~${formatSize(totalBytes)}`;
+    }
+    
     const downloadId = `${videoIndex}-${streamIndex}`;
     
     streamsHtml += `
       <div class="stream-option" data-download-id="${downloadId}">
         <div class="stream-info">
           <div class="resolution">${resolution}${qualityBadge}</div>
-          <div class="bandwidth">${chrome.i18n.getMessage('bitrate')}: ${bandwidth} ${stream.frameRate ? `• ${parseInt(stream.frameRate).toFixed(0)} fps` : ''}</div>
+		  <div class="bandwidth">${chrome.i18n.getMessage('bitrate')}: ${bandwidth}${estimatedSize}</div>
         </div>
         <button class="download-btn" data-stream-index="${streamIndex}" data-video-index="${videoIndex}">
           ${chrome.i18n.getMessage('downloadButton')}
@@ -187,7 +208,7 @@ function createVideoItem(video, videoIndex, tabId) {
   videoItem.innerHTML = `
     <div class="video-header">
       <div class="video-title">${chrome.i18n.getMessage('videoNumber', [(videoIndex + 1).toString()])}</div>
-      <div class="video-time">${timestamp}</div>
+      <div class="video-time">${displayTime}</div>
     </div>
     ${streamsHtml}
   `;
@@ -315,14 +336,30 @@ function formatSpeed(bytesPerSecond) {
   }
 }
 
+// 格式化时长
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) {
+    return chrome.i18n.getMessage('unknown') || '未知';
+  }
+  
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  // 始终显示 00:00:00 格式
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
 // 格式化大小
 function formatSize(bytes) {
   if (bytes < 1024) {
-    return `${bytes} B`;
+    return `${bytes.toFixed(0)}B`;
   } else if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(2)} KB`;
+    return `${(bytes / 1024).toFixed(2)}KB`;
+  } else if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
   } else {
-    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`;
   }
 }
 

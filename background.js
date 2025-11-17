@@ -34,28 +34,6 @@ chrome.webRequest.onBeforeRequest.addListener(
         url.includes('.m3u8') && 
         !url.includes('_hls.m3u8')) {
       
-      // 获取当前标签页的 URL
-      chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError || !tab) {
-          return;
-        }
-        
-        const currentUrl = tab.url;
-        const previousUrl = tabUrls[tabId];
-        
-        // 如果 URL 发生变化,清理该标签页的旧视频数据
-        if (previousUrl && previousUrl !== currentUrl) {
-          console.log(`标签页 ${tabId} URL 已变化: ${previousUrl} -> ${currentUrl}`);
-          console.log('清理旧视频数据...');
-          videoInfo[tabId] = [];
-          chrome.storage.local.set({ [tabId]: [] });
-          updateBadge('', '#666666', tabId);
-        }
-        
-        // 更新记录的 URL
-        tabUrls[tabId] = currentUrl;
-      });
-      
       // 去重：检查是否在最近3秒内已处理过相同URL
       const now = Date.now();
       const cacheKey = `${tabId}-${url}`;
@@ -76,8 +54,8 @@ chrome.webRequest.onBeforeRequest.addListener(
           const response = await fetch(url);
           const m3u8Content = await response.text();
           
-          // 解析m3u8内容
-          const videoData = parseMainM3u8(m3u8Content, url);
+          // 解析m3u8内容（现在是异步函数）
+          const videoData = await parseMainM3u8(m3u8Content, url);
           
           if (videoData) {
             // 检查是否已存在相同的视频（通过URL判断）
@@ -134,7 +112,7 @@ setInterval(() => {
 }, 60000);
 
 // 解析主m3u8文件
-function parseMainM3u8(content, baseUrl) {
+async function parseMainM3u8(content, baseUrl) {
   const lines = content.split('\n');
   let aesKeyUrl = null;
   
@@ -186,11 +164,49 @@ function parseMainM3u8(content, baseUrl) {
     return null;
   }
   
+  // 获取视频时长（使用第一个流的URL）
+  let duration = null;
+  if (streams.length > 0) {
+    try {
+      duration = await getVideoDuration(streams[0].url);
+    } catch (error) {
+      console.warn('获取视频时长失败:', error);
+    }
+  }
+  
   return {
     streams: streams,
     aesKeyUrl: aesKeyUrl,
-    baseUrl: baseUrl
+    baseUrl: baseUrl,
+    duration: duration
   };
+}
+
+// 获取视频时长
+async function getVideoDuration(streamUrl) {
+  try {
+    const response = await fetch(streamUrl);
+    const m3u8Content = await response.text();
+    const lines = m3u8Content.split('\n');
+    
+    let totalDuration = 0;
+    
+    for (let line of lines) {
+      line = line.trim();
+      // 查找 #EXTINF 标签，格式如：#EXTINF:10.0,
+      if (line.startsWith('#EXTINF:')) {
+        const durationMatch = line.match(/#EXTINF:([\d.]+)/);
+        if (durationMatch) {
+          totalDuration += parseFloat(durationMatch[1]);
+        }
+      }
+    }
+    
+    return totalDuration > 0 ? totalDuration : null;
+  } catch (error) {
+    console.error('解析视频时长失败:', error);
+    return null;
+  }
 }
 
 // 处理来自popup的消息
@@ -621,6 +637,38 @@ function updateBadge(text, color, tabId) {
     chrome.action.setBadgeBackgroundColor({ color: color });
   }
 }
+
+// 监听标签页更新（页面导航）
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // 当页面开始加载新URL时（导航发生）
+  if (changeInfo.url || (changeInfo.status === 'loading' && tab.url)) {
+    const currentUrl = changeInfo.url || tab.url;
+    const previousUrl = tabUrls[tabId];
+    
+    // 如果 URL 发生变化（排除首次加载的情况）
+    if (previousUrl && previousUrl !== currentUrl) {
+      console.log(`标签页 ${tabId} 导航: ${previousUrl} -> ${currentUrl}`);
+      console.log('清理旧视频列表...');
+      
+      // 清理视频信息
+      if (videoInfo[tabId]) {
+        delete videoInfo[tabId];
+        chrome.storage.local.remove(tabId.toString());
+      }
+      
+      // 重置徽章
+      updateBadge('', '#666666', tabId);
+      
+      // 如果有正在进行的下载，取消它
+      if (downloadStates[tabId]) {
+        delete downloadStates[tabId];
+      }
+    }
+    
+    // 更新记录的 URL
+    tabUrls[tabId] = currentUrl;
+  }
+});
 
 // 清理关闭的标签页数据
 chrome.tabs.onRemoved.addListener((tabId) => {
