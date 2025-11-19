@@ -4,7 +4,7 @@ let videoInfo = {};
 // 存储每个标签页的当前 URL
 let tabUrls = {};
 
-// 存储已处理的URL，用于去重
+// 存储已处理的URL,用于去重
 let processedUrls = new Map();
 
 // 存储下载状态（持久化）
@@ -30,9 +30,20 @@ chrome.webRequest.onBeforeRequest.addListener(
     }
     
     // 检测主m3u8请求（包含分辨率列表）
-    if (url.includes('api.rplay-cdn.com/content/hlsstream') && 
-        url.includes('.m3u8') && 
-        !url.includes('_hls.m3u8')) {
+    // 使用正则表达式精确匹配主清单文件
+    
+    // 规则1: api.rplay.live 的 master.m3u8 格式
+    // 例如: https://api.rplay.live/content/hlsstream?parent=1&s3key=us/ivs/v1/.../media/hls/master.m3u8&token=...
+    const rplayLivePattern = /^https:\/\/api\.rplay\.live\/content\/hlsstream\?.*media\/hls\/master\.m3u8.*$/;
+    
+    // 规则2: api.rplay-cdn.com 的主清单 .m3u8 格式
+    // 匹配: https://api.rplay-cdn.com/content/hlsstream?s3key=.../xxx.m3u8&...
+    // 排除: 包含 playlist.m3u8 或 _hls.m3u8 的子清单
+    const rplayCdnPattern = /^https:\/\/api\.rplay-cdn\.com\/content\/hlsstream\?s3key=.*(?<!playlist|_hls)\.m3u8.*$/;
+    
+    const isMasterPlaylist = rplayLivePattern.test(url) || rplayCdnPattern.test(url);
+    
+    if (isMasterPlaylist) {
       
       // 去重：检查是否在最近3秒内已处理过相同URL
       const now = Date.now();
@@ -96,7 +107,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       }, 500);
     }
   },
-  { urls: ["*://*.rplay-cdn.com/*"] }
+  { urls: ["*://*.rplay-cdn.com/*", "*://*.rplay.live/*"] }  // 添加新域名
 );
 
 // 定期清理过期的URL记录（每分钟清理一次）
@@ -116,7 +127,7 @@ async function parseMainM3u8(content, baseUrl) {
   const lines = content.split('\n');
   let aesKeyUrl = null;
   
-  // 提取AES密钥URL
+  // 提取AES密钥URL（如果存在）
   for (let line of lines) {
     if (line.includes('EXT-X-SESSION-KEY') || line.includes('EXT-X-KEY')) {
       const match = line.match(/URI="([^"]+)"/);
@@ -176,7 +187,7 @@ async function parseMainM3u8(content, baseUrl) {
   
   return {
     streams: streams,
-    aesKeyUrl: aesKeyUrl,
+    aesKeyUrl: aesKeyUrl,  // 可能为null（无加密视频）
     baseUrl: baseUrl,
     duration: duration
   };
@@ -269,7 +280,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-// 下载视频函数（优化版，避免Base64长度限制）
+// 下载视频函数（支持加密和非加密视频）
 async function downloadVideo(videoData, tabId, downloadId = '0-0') {
   const statsId = `${tabId}-${Date.now()}`;
   
@@ -279,70 +290,47 @@ async function downloadVideo(videoData, tabId, downloadId = '0-0') {
       status: 'downloading',
       progress: 0,
       speed: 0,
-      downloadedSize: 0,
-      totalSize: 0,
-      startTime: Date.now(),
-      downloadId: downloadId  // 记录downloadId以便恢复UI
+      message: '正在准备下载...',
+      downloadId: downloadId
     };
     
     downloadStats[statsId] = {
       startTime: Date.now(),
-      downloadedBytes: 0,
-      lastUpdateTime: Date.now(),
-      lastDownloadedBytes: 0
+      downloadedSize: 0
     };
     
-    // 更新徽章显示下载中
-    updateBadge('↓', '#2196F3', tabId);
-    
-    // 通知popup开始下载
     broadcastMessage({
       type: 'DOWNLOAD_STARTED',
       tabId: tabId,
       state: downloadStates[tabId]
     });
     
+    updateBadge('↓', '#007bff', tabId);
+    
     const { streamUrl, aesKeyUrl, resolution } = videoData;
+    const hasEncryption = !!aesKeyUrl;  // 检查是否有加密
     
-    console.log('开始下载视频:', resolution);
+    updateDownloadState(tabId, { 
+      status: 'preparing',
+      message: hasEncryption ? '正在准备下载（加密视频）...' : '正在准备下载...',
+      progress: 0
+    });
     
-    // 1. 下载AES密钥
-    console.log('正在下载AES密钥...');
-    updateDownloadState(tabId, { status: 'preparing', message: '正在下载密钥...' });
+    console.log('获取流URL:', streamUrl);
+    console.log('AES密钥URL:', aesKeyUrl || '无加密');
     
-    const keyResponse = await fetch(aesKeyUrl);
-    if (!keyResponse.ok) {
-      throw new Error('密钥下载失败');
-    }
-    const keyData = await keyResponse.arrayBuffer();
+    const response = await fetch(streamUrl);
+    const m3u8Content = await response.text();
+    const lines = m3u8Content.split('\n');
     
-    // 导入密钥
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'AES-CBC' },
-      false,
-      ['decrypt']
-    );
-    console.log('AES密钥导入成功');
-    
-    // 2. 获取视频片段列表
-    console.log('正在获取视频片段列表...');
-    updateDownloadState(tabId, { status: 'preparing', message: '正在获取片段列表...' });
-    
-    const m3u8Response = await fetch(streamUrl);
-    if (!m3u8Response.ok) {
-      throw new Error('播放列表下载失败');
-    }
-    const m3u8Text = await m3u8Response.text();
-    
-    // 解析ts片段URL
-    const lines = m3u8Text.split('\n');
     const tsUrls = [];
+    const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
+    
     for (let line of lines) {
       line = line.trim();
-      if (line && !line.startsWith('#') && (line.endsWith('.ts') || line.includes('.ts?'))) {
-        tsUrls.push(line);
+      if (line && !line.startsWith('#')) {
+        const tsUrl = line.startsWith('http') ? line : baseUrl + line;
+        tsUrls.push(tsUrl);
       }
     }
     
@@ -351,233 +339,47 @@ async function downloadVideo(videoData, tabId, downloadId = '0-0') {
     }
     
     console.log(`找到 ${tsUrls.length} 个视频片段`);
+    
     updateDownloadState(tabId, { 
-      status: 'downloading', 
-      message: `开始下载 ${tsUrls.length} 个片段...`,
-      totalSegments: tsUrls.length
+      status: 'downloading',
+      message: `准备下载 ${tsUrls.length} 个片段`,
+      totalSegments: tsUrls.length,
+      completedSegments: 0,
+      progress: 0
     });
     
     // 获取页面标题作为文件名
-    let pageTitle = '';
+    let filename = `rplay_${resolution}_${Date.now()}.ts`;
     try {
-      const [result] = await chrome.scripting.executeScript({
+      const titleResults = await chrome.scripting.executeScript({
         target: { tabId: tabId },
         func: () => {
           // 优先从 meta 标签获取标题
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          const metaTitle = document.querySelector('meta[name="title"]');
-          
-          if (ogTitle && ogTitle.content) {
-            return ogTitle.content;
-          } else if (metaTitle && metaTitle.content) {
-            return metaTitle.content;
-          } else {
-            return document.title;
-          }
+          const metaTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
+                           document.querySelector('meta[name="title"]')?.getAttribute('content') ||
+						   document.querySelector('meta[name="twitter:title"]')?.getAttribute('content') ||
+                           document.title;
+          return metaTitle;
         }
       });
       
-      if (result && result.result) {
-        pageTitle = result.result;
+      if (titleResults && titleResults[0] && titleResults[0].result) {
+        const pageTitle = titleResults[0].result.trim();
+        // 清理文件名中的非法字符
+        const cleanTitle = pageTitle.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+        filename = `${cleanTitle}_${resolution}.ts`;
       }
     } catch (error) {
-      console.warn('获取页面标题失败:', error);
+      console.warn('无法获取页面标题，使用默认文件名:', error);
     }
     
-    // 清理文件名（移除非法字符）
-    const sanitizeFilename = (name) => {
-      return name
-        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '') // 移除非法字符
-        .replace(/\s+/g, '_') // 空格替换为下划线
-        .substring(0, 100); // 限制长度
-    };
-    
-    // 生成文件名
-    let filename;
-    if (pageTitle) {
-      const cleanTitle = sanitizeFilename(pageTitle);
-      filename = `${cleanTitle}_${resolution.replace('x', 'p')}.ts`;
+    // 根据是否有加密选择不同的下载方法
+    if (hasEncryption) {
+      await downloadEncryptedVideo(tsUrls, aesKeyUrl, filename, tabId, statsId);
     } else {
-      filename = `rplay_${resolution.replace('x', 'p')}_${Date.now()}.ts`;
+      await downloadUnencryptedVideo(tsUrls, filename, tabId, statsId);
     }
     
-    console.log('使用文件名:', filename);
-    
-    // 新策略：不在background中下载，而是将下载任务传递给页面脚本
-    // 这样可以在页面环境中直接创建Blob并下载，避免数据传输问题
-    chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: async (urls, key, fname, bgTabId) => {
-        try {
-          console.log('开始在页面中下载和解密视频...');
-          
-          // 定义进度报告函数（通过window.postMessage与content script通信）
-          const reportProgress = (completed, total, speed = 0) => {
-            window.postMessage({
-              type: 'RPLAY_DOWNLOAD_PROGRESS',
-              tabId: bgTabId,
-              completed: completed,
-              total: total,
-              speed: speed
-            }, '*');
-          };
-          
-          // 导入密钥
-          reportProgress(0, urls.length);
-          const keyResponse = await fetch(key);
-          const keyData = await keyResponse.arrayBuffer();
-          const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            keyData,
-            { name: 'AES-CBC' },
-            false,
-            ['decrypt']
-          );
-          
-          console.log('密钥导入成功，开始下载', urls.length, '个片段');
-          
-          // 下载并解密所有片段
-          const decryptedBlobs = [];
-          let downloadedBytes = 0;
-          let lastReportTime = Date.now();
-          let lastDownloadedBytes = 0;
-          
-          for (let i = 0; i < urls.length; i++) {
-            const response = await fetch(urls[i]);
-            const encryptedData = await response.arrayBuffer();
-            
-            downloadedBytes += encryptedData.byteLength;
-            
-            // 计算速度并报告进度（每秒或每10个片段）
-            const now = Date.now();
-            if (i % 5 === 0 || now - lastReportTime >= 1000) {
-              const timeDiff = (now - lastReportTime) / 1000;
-              const bytesDiff = downloadedBytes - lastDownloadedBytes;
-              const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
-              
-              reportProgress(i + 1, urls.length, speed);
-              
-              lastReportTime = now;
-              lastDownloadedBytes = downloadedBytes;
-            }
-            
-            // 解密
-            const iv = new Uint8Array(16);
-            new DataView(iv.buffer).setUint32(12, i, false);
-            
-            let decryptedData;
-            try {
-              decryptedData = await crypto.subtle.decrypt(
-                { name: 'AES-CBC', iv: iv },
-                cryptoKey,
-                encryptedData
-              );
-            } catch (e) {
-              try {
-                const zeroIV = new Uint8Array(16);
-                decryptedData = await crypto.subtle.decrypt(
-                  { name: 'AES-CBC', iv: zeroIV },
-                  cryptoKey,
-                  encryptedData
-                );
-              } catch (e2) {
-                console.warn(`片段 ${i + 1} 解密失败，使用原始数据`);
-                decryptedData = encryptedData;
-              }
-            }
-            
-            decryptedBlobs.push(new Blob([decryptedData]));
-          }
-          
-          // 报告合并状态
-          reportProgress(urls.length, urls.length, 0);
-          console.log('所有片段处理完成，开始合并...');
-          
-          // 合并Blob
-          const mergedBlob = new Blob(decryptedBlobs, { type: 'video/mp2t' });
-          console.log('合并完成，大小:', (mergedBlob.size / 1024 / 1024).toFixed(2), 'MB');
-          
-          // 下载
-          const url = URL.createObjectURL(mergedBlob);
-          const a = document.createElement('a');
-          a.style.display = 'none';
-          a.href = url;
-          a.download = fname;
-          document.body.appendChild(a);
-          a.click();
-          
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 100);
-          
-          return { success: true, size: mergedBlob.size, totalBytes: downloadedBytes };
-        } catch (error) {
-          return { success: false, error: error.message };
-        }
-      },
-      args: [tsUrls, aesKeyUrl, filename, tabId]
-    }).then((results) => {
-      if (results && results[0] && results[0].result && results[0].result.success) {
-        console.log('下载成功！');
-        
-        const totalTime = (Date.now() - downloadStats[statsId].startTime) / 1000;
-        const totalBytes = results[0].result.totalBytes || 0;
-        const avgSpeed = totalBytes > 0 ? totalBytes / totalTime : 0;
-        
-        updateDownloadState(tabId, { 
-          status: 'completed', 
-          message: `下载完成！`,
-          progress: 100,
-          totalTime: totalTime,
-          avgSpeed: avgSpeed,
-          downloadedSize: totalBytes
-        });
-        
-        updateBadge('✓', '#28a745', tabId);
-        
-        broadcastMessage({
-          type: 'DOWNLOAD_COMPLETE',
-          tabId: tabId,
-          filename: filename,
-          state: downloadStates[tabId]
-        });
-        
-        setTimeout(() => {
-          updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
-          delete downloadStates[tabId];
-          delete downloadStats[statsId];
-        }, 3000);
-      } else {
-        const error = results && results[0] && results[0].result ? results[0].result.error : '未知错误';
-        throw new Error('下载失败: ' + error);
-      }
-    }).catch((error) => {
-      console.error('下载失败:', error);
-      
-      updateBadge('✗', '#dc3545', tabId);
-      
-      updateDownloadState(tabId, { 
-        status: 'error', 
-        message: error.message || '下载失败' 
-      });
-      
-      broadcastMessage({
-        type: 'DOWNLOAD_ERROR',
-        tabId: tabId,
-        error: error.message || '下载失败',
-        state: downloadStates[tabId]
-      });
-      
-      setTimeout(() => {
-        updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
-        delete downloadStates[tabId];
-        delete downloadStats[statsId];
-      }, 3000);
-    });
-    
-    // 注意：下面的代码不再执行，因为我们已经用新方法处理了
-    return;  // 提前返回
   } catch (error) {
     console.error('下载过程出错:', error);
     
@@ -601,6 +403,318 @@ async function downloadVideo(videoData, tabId, downloadId = '0-0') {
       delete downloadStats[statsId];
     }, 3000);
   }
+}
+
+// 下载加密视频（原有的逻辑）
+async function downloadEncryptedVideo(tsUrls, aesKeyUrl, filename, tabId, statsId) {
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    func: async (urls, key, fname, bgTabId) => {
+      try {
+        console.log('开始在页面中下载和解密视频...');
+        
+        // 定义进度报告函数
+        const reportProgress = (completed, total, speed = 0) => {
+          window.postMessage({
+            type: 'RPLAY_DOWNLOAD_PROGRESS',
+            tabId: bgTabId,
+            completed: completed,
+            total: total,
+            speed: speed
+          }, '*');
+        };
+        
+        // 导入密钥
+        reportProgress(0, urls.length);
+        const keyResponse = await fetch(key);
+        const keyData = await keyResponse.arrayBuffer();
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          keyData,
+          { name: 'AES-CBC' },
+          false,
+          ['decrypt']
+        );
+        
+        console.log('密钥导入成功，开始下载', urls.length, '个片段');
+        
+        // 下载并解密所有片段
+        const decryptedBlobs = [];
+        let downloadedBytes = 0;
+        let lastReportTime = Date.now();
+        let lastDownloadedBytes = 0;
+        
+        for (let i = 0; i < urls.length; i++) {
+          const response = await fetch(urls[i]);
+          const encryptedData = await response.arrayBuffer();
+          
+          downloadedBytes += encryptedData.byteLength;
+          
+          // 计算速度并报告进度
+          const now = Date.now();
+          if (i % 5 === 0 || now - lastReportTime >= 1000) {
+            const timeDiff = (now - lastReportTime) / 1000;
+            const bytesDiff = downloadedBytes - lastDownloadedBytes;
+            const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
+            
+            reportProgress(i + 1, urls.length, speed);
+            
+            lastReportTime = now;
+            lastDownloadedBytes = downloadedBytes;
+          }
+          
+          // 解密
+          const iv = new Uint8Array(16);
+          new DataView(iv.buffer).setUint32(12, i, false);
+          
+          let decryptedData;
+          try {
+            decryptedData = await crypto.subtle.decrypt(
+              { name: 'AES-CBC', iv: iv },
+              cryptoKey,
+              encryptedData
+            );
+          } catch (e) {
+            try {
+              const zeroIV = new Uint8Array(16);
+              decryptedData = await crypto.subtle.decrypt(
+                { name: 'AES-CBC', iv: zeroIV },
+                cryptoKey,
+                encryptedData
+              );
+            } catch (e2) {
+              console.warn(`片段 ${i + 1} 解密失败，使用原始数据`);
+              decryptedData = encryptedData;
+            }
+          }
+          
+          decryptedBlobs.push(new Blob([decryptedData]));
+        }
+        
+        // 报告合并状态
+        reportProgress(urls.length, urls.length, 0);
+        console.log('所有片段处理完成，开始合并...');
+        
+        // 合并Blob
+        const mergedBlob = new Blob(decryptedBlobs, { type: 'video/mp2t' });
+        console.log('合并完成，大小:', (mergedBlob.size / 1024 / 1024).toFixed(2), 'MB');
+        
+        // 下载
+        const url = URL.createObjectURL(mergedBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+        
+        return { success: true, size: mergedBlob.size, totalBytes: downloadedBytes };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+    args: [tsUrls, aesKeyUrl, filename, tabId]
+  }).then((results) => {
+    if (results && results[0] && results[0].result && results[0].result.success) {
+      console.log('下载成功！');
+      
+      const totalTime = (Date.now() - downloadStats[statsId].startTime) / 1000;
+      const totalBytes = results[0].result.totalBytes || 0;
+      const avgSpeed = totalBytes > 0 ? totalBytes / totalTime : 0;
+      
+      updateDownloadState(tabId, { 
+        status: 'completed', 
+        message: `下载完成！`,
+        progress: 100,
+        totalTime: totalTime,
+        avgSpeed: avgSpeed,
+        downloadedSize: totalBytes
+      });
+      
+      updateBadge('✓', '#28a745', tabId);
+      
+      broadcastMessage({
+        type: 'DOWNLOAD_COMPLETE',
+        tabId: tabId,
+        filename: filename,
+        state: downloadStates[tabId]
+      });
+      
+      setTimeout(() => {
+        updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
+        delete downloadStates[tabId];
+        delete downloadStats[statsId];
+      }, 3000);
+    } else {
+      const error = results && results[0] && results[0].result ? results[0].result.error : '未知错误';
+      throw new Error('下载失败: ' + error);
+    }
+  }).catch((error) => {
+    console.error('下载失败:', error);
+    
+    updateBadge('✗', '#dc3545', tabId);
+    
+    updateDownloadState(tabId, { 
+      status: 'error', 
+      message: error.message || '下载失败' 
+    });
+    
+    broadcastMessage({
+      type: 'DOWNLOAD_ERROR',
+      tabId: tabId,
+      error: error.message || '下载失败',
+      state: downloadStates[tabId]
+    });
+    
+    setTimeout(() => {
+      updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
+      delete downloadStates[tabId];
+      delete downloadStats[statsId];
+    }, 3000);
+  });
+}
+
+// 下载非加密视频（新增逻辑）
+async function downloadUnencryptedVideo(tsUrls, filename, tabId, statsId) {
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    func: async (urls, fname, bgTabId) => {
+      try {
+        console.log('开始下载非加密视频...');
+        
+        // 定义进度报告函数
+        const reportProgress = (completed, total, speed = 0) => {
+          window.postMessage({
+            type: 'RPLAY_DOWNLOAD_PROGRESS',
+            tabId: bgTabId,
+            completed: completed,
+            total: total,
+            speed: speed
+          }, '*');
+        };
+        
+        reportProgress(0, urls.length);
+        console.log('开始下载', urls.length, '个片段');
+        
+        // 下载所有片段（无需解密）
+        const blobs = [];
+        let downloadedBytes = 0;
+        let lastReportTime = Date.now();
+        let lastDownloadedBytes = 0;
+        
+        for (let i = 0; i < urls.length; i++) {
+          const response = await fetch(urls[i]);
+          const data = await response.arrayBuffer();
+          
+          downloadedBytes += data.byteLength;
+          
+          // 计算速度并报告进度
+          const now = Date.now();
+          if (i % 5 === 0 || now - lastReportTime >= 1000) {
+            const timeDiff = (now - lastReportTime) / 1000;
+            const bytesDiff = downloadedBytes - lastDownloadedBytes;
+            const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
+            
+            reportProgress(i + 1, urls.length, speed);
+            
+            lastReportTime = now;
+            lastDownloadedBytes = downloadedBytes;
+          }
+          
+          blobs.push(new Blob([data]));
+        }
+        
+        // 报告合并状态
+        reportProgress(urls.length, urls.length, 0);
+        console.log('所有片段下载完成，开始合并...');
+        
+        // 合并Blob
+        const mergedBlob = new Blob(blobs, { type: 'video/mp2t' });
+        console.log('合并完成，大小:', (mergedBlob.size / 1024 / 1024).toFixed(2), 'MB');
+        
+        // 下载
+        const url = URL.createObjectURL(mergedBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+        
+        return { success: true, size: mergedBlob.size, totalBytes: downloadedBytes };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+    args: [tsUrls, filename, tabId]
+  }).then((results) => {
+    if (results && results[0] && results[0].result && results[0].result.success) {
+      console.log('下载成功！');
+      
+      const totalTime = (Date.now() - downloadStats[statsId].startTime) / 1000;
+      const totalBytes = results[0].result.totalBytes || 0;
+      const avgSpeed = totalBytes > 0 ? totalBytes / totalTime : 0;
+      
+      updateDownloadState(tabId, { 
+        status: 'completed', 
+        message: `下载完成！`,
+        progress: 100,
+        totalTime: totalTime,
+        avgSpeed: avgSpeed,
+        downloadedSize: totalBytes
+      });
+      
+      updateBadge('✓', '#28a745', tabId);
+      
+      broadcastMessage({
+        type: 'DOWNLOAD_COMPLETE',
+        tabId: tabId,
+        filename: filename,
+        state: downloadStates[tabId]
+      });
+      
+      setTimeout(() => {
+        updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
+        delete downloadStates[tabId];
+        delete downloadStats[statsId];
+      }, 3000);
+    } else {
+      const error = results && results[0] && results[0].result ? results[0].result.error : '未知错误';
+      throw new Error('下载失败: ' + error);
+    }
+  }).catch((error) => {
+    console.error('下载失败:', error);
+    
+    updateBadge('✗', '#dc3545', tabId);
+    
+    updateDownloadState(tabId, { 
+      status: 'error', 
+      message: error.message || '下载失败' 
+    });
+    
+    broadcastMessage({
+      type: 'DOWNLOAD_ERROR',
+      tabId: tabId,
+      error: error.message || '下载失败',
+      state: downloadStates[tabId]
+    });
+    
+    setTimeout(() => {
+      updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
+      delete downloadStates[tabId];
+      delete downloadStats[statsId];
+    }, 3000);
+  });
 }
 
 // 更新下载状态
