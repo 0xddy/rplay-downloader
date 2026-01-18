@@ -13,7 +13,7 @@
 - 🌍 多语言支持
 
 ## ‼️ 注意事项
- 虽然使用了 **Mux.js** 转换了容器，但是并不完美，仅防止Win资源管理器预览卡死，使用 **VLC** 播放是有问题的，建议使用兼容性更好的 **PotPlayer** 播放，你可以使用 **FFmpeg** 执行  `ffmpeg -i input.mp4 -c copy output.mp4 -y ` 修复视频的头部信息。
+ 使用 **VLC** 播放是有问题的，建议使用兼容性更好的 **PotPlayer** 播放，你可以使用 **FFmpeg** 执行  `ffmpeg -i input.mp4 -c copy output.mp4 -y ` 修复视频的头部信息。
 
 ## 📦 安装使用
 
@@ -56,6 +56,7 @@
 ---
 
 如果觉得这个项目有帮助，请给个 ⭐ Star 支持一下！
+
 
 
 

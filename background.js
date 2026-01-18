@@ -1,363 +1,507 @@
 // background.js
 
-const CONCURRENT_LIMIT = 2; // 设置并发下载数量
+// ================== 配置常量 ==================
+const CONCURRENT_LIMIT = 5; // 并发下载数量
+const URL_CACHE_DURATION = 3000; // URL 去重缓存时间（毫秒）
+const URL_CACHE_CLEANUP_INTERVAL = 60000; // URL 缓存清理间隔（毫秒）
+const URL_CACHE_MAX_AGE = 60000; // URL 缓存最大存活时间（毫秒）
+const DELAY_BEFORE_FETCH_M3U8 = 500; // 延迟获取 m3u8 的时间（毫秒）
+
+// URL 匹配正则表达式（编译为常量以提升性能）
+const M3U8_PATTERNS = {
+  rplayLive: /^https:\/\/api\.rplay\.live\/content\/hlsstream\?.*media\/hls\/master\.m3u8.*$/,
+  rplayCdn: /^https:\/\/api\.rplay-cdn\.com\/content\/hlsstream\?s3key=.*(?<!playlist|_hls)\.m3u8.*$/,
+  rplayApi2: /^https:\/\/api2\.rplay\.live\/content\/hlsstream\?.*s3key=.*\.m3u8.*$/
+};
+
+// m3u8 解析正则
+const M3U8_REGEX = {
+  extInf: /#EXTINF:([\d.]+)/,
+  mediaSequence: /#EXT-X-MEDIA-SEQUENCE:(\d+)/,
+  keyUri: /URI="([^"]+)"/,
+  keyIv: /IV=(0x[0-9a-fA-F]+)/,
+  streamInf: /#EXT-X-STREAM-INF:/,
+  resolution: /RESOLUTION=(\d+x\d+)/,
+  bandwidth: /BANDWIDTH=(\d+)/
+};
 
 // ================== 全局变量 ==================
-let videoInfo = {};
-let tabUrls = {};
-let processedUrls = new Map();
-let downloadStates = {};
-let downloadStats = {};
+const videoInfo = {};
+const tabUrls = {};
+const processedUrls = new Map();
+const downloadStates = {};
+const downloadStats = {};
 // ===============================================
 
-// 1. 监听网络请求
+// ================== 工具函数 ==================
+
+/**
+ * 检查 URL 是否为有效的 m3u8 主列表
+ */
+function isM3u8MasterUrl(url) {
+  return M3U8_PATTERNS.rplayLive.test(url) || 
+         M3U8_PATTERNS.rplayCdn.test(url) || 
+         M3U8_PATTERNS.rplayApi2.test(url);
+}
+
+/**
+ * 检查并更新 URL 缓存，避免重复处理
+ */
+function shouldProcessUrl(tabId, url) {
+  const now = Date.now();
+  const cacheKey = `${tabId}-${url}`;
+  const cachedTime = processedUrls.get(cacheKey);
+  
+  if (cachedTime && (now - cachedTime) < URL_CACHE_DURATION) {
+    return false;
+  }
+  
+  processedUrls.set(cacheKey, now);
+  return true;
+}
+
+/**
+ * 解析相对 URL 为绝对 URL
+ */
+function resolveUrl(url, baseUrl) {
+  if (!url) return null;
+  if (url.startsWith('http')) return url;
+  try {
+    return new URL(url, baseUrl).href;
+  } catch (e) {
+    return url;
+  }
+}
+
+/**
+ * 生成安全的文件名
+ */
+function sanitizeFilename(title, resolution, extension = '.ts') {
+  const sanitized = title.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+  return `${sanitized}_${resolution}_${Date.now()}${extension}`;
+}
+
+// ================== 网络请求监听 ==================
+
 chrome.webRequest.onBeforeRequest.addListener(
   async (details) => {
-    const url = details.url;
-    const tabId = details.tabId;
+    const { url, tabId, type } = details;
+    
+    // 快速过滤无效请求
     if (!tabId || tabId < 0) return;
-    if (details.type !== 'xmlhttprequest' && details.type !== 'other') return;
+    if (type !== 'xmlhttprequest' && type !== 'other') return;
+    if (!isM3u8MasterUrl(url)) return;
+    if (!shouldProcessUrl(tabId, url)) return;
     
-    const rplayLivePattern = /^https:\/\/api\.rplay\.live\/content\/hlsstream\?.*media\/hls\/master\.m3u8.*$/;
-    const rplayCdnPattern = /^https:\/\/api\.rplay-cdn\.com\/content\/hlsstream\?s3key=.*(?<!playlist|_hls)\.m3u8.*$/;
+    console.log('[RPlay] 检测到主m3u8请求:', url);
     
-    if (rplayLivePattern.test(url) || rplayCdnPattern.test(url)) {
-      const now = Date.now();
-      const cacheKey = `${tabId}-${url}`;
-      if (processedUrls.get(cacheKey) && (now - processedUrls.get(cacheKey)) < 3000) return;
-      processedUrls.set(cacheKey, now);
-      
-      console.log('检测到主m3u8请求:', url);
-      setTimeout(async () => {
-        try {
-          const response = await fetch(url);
-          const m3u8Content = await response.text();
-          const videoData = await parseMainM3u8(m3u8Content, url);
-          if (videoData) {
-            if (!videoInfo[tabId]) videoInfo[tabId] = [];
-            if (videoInfo[tabId].some(v => v.baseUrl === videoData.baseUrl)) return;
-            videoInfo[tabId].push({ ...videoData, timestamp: Date.now() });
-            updateBadge(videoInfo[tabId].length.toString(), '#666666', tabId);
-            chrome.tabs.sendMessage(tabId, { type: 'VIDEO_DETECTED', data: videoData }).catch(() => {});
-            chrome.storage.local.set({ [tabId]: videoInfo[tabId] });
-            console.log('视频信息已保存');
-          }
-        } catch (error) { console.error('获取m3u8失败:', error); }
-      }, 500);
-    }
+    // 延迟处理，确保页面已完成必要初始化
+    setTimeout(async () => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          console.warn(`[RPlay] 获取 m3u8 失败: HTTP ${response.status}`);
+          return;
+        }
+        
+        const m3u8Content = await response.text();
+        const videoData = await parseMainM3u8(m3u8Content, url);
+        
+        if (!videoData) return;
+        
+        // 初始化 tabId 对应的视频信息数组
+        if (!videoInfo[tabId]) {
+          videoInfo[tabId] = [];
+        }
+        
+        // 避免重复添加相同的视频源
+        if (videoInfo[tabId].some(v => v.baseUrl === videoData.baseUrl)) {
+          return;
+        }
+        
+        // 保存视频信息
+        videoInfo[tabId].push({ ...videoData, timestamp: Date.now() });
+        updateBadge(videoInfo[tabId].length.toString(), '#666666', tabId);
+        
+        // 通知 content script 和保存到 storage
+        chrome.tabs.sendMessage(tabId, { type: 'VIDEO_DETECTED', data: videoData }).catch(() => {});
+        chrome.storage.local.set({ [tabId]: videoInfo[tabId] });
+        
+        console.log('[RPlay] 视频信息已保存');
+      } catch (error) {
+        console.error('[RPlay] 获取m3u8失败:', error);
+      }
+    }, DELAY_BEFORE_FETCH_M3U8);
   },
-  { urls: ["*://*.rplay-cdn.com/*", "*://*.rplay.live/*"] }
+  { urls: ["*://*.rplay-cdn.com/*", "*://*.rplay.live/*", "*://api2.rplay.live/*"] }
 );
 
+// 定期清理过期的 URL 缓存
 setInterval(() => {
   const now = Date.now();
   for (const [key, timestamp] of processedUrls.entries()) {
-    if (now - timestamp > 60000) processedUrls.delete(key);
+    if (now - timestamp > URL_CACHE_MAX_AGE) {
+      processedUrls.delete(key);
+    }
   }
-}, 60000);
+}, URL_CACHE_CLEANUP_INTERVAL);
 
-// 2. 解析主m3u8
+// ================== m3u8 解析函数 ==================
+
+/**
+ * 解析主 m3u8 文件，提取流信息、加密密钥等
+ */
 async function parseMainM3u8(content, baseUrl) {
-    const lines = content.split('\n');
+    const lines = content.split('\n').map(line => line.trim());
     let aesKeyUrl = null;
     let aesIv = null;
 
-    // 1. 提取 Key 和 IV
-    for (let line of lines) {
-        line = line.trim();
+    // 提取加密密钥和 IV
+    for (const line of lines) {
         if (line.includes('EXT-X-SESSION-KEY') || line.includes('EXT-X-KEY')) {
-            const uriMatch = line.match(/URI="([^"]+)"/);
+            const uriMatch = line.match(M3U8_REGEX.keyUri);
             if (uriMatch) {
-                let tempKey = uriMatch[1];
-                if (tempKey && !tempKey.startsWith('http')) {
-                    try { aesKeyUrl = new URL(tempKey, baseUrl).href; } catch(e) { aesKeyUrl = tempKey; }
-                } else {
-                    aesKeyUrl = tempKey;
-                }
+                aesKeyUrl = resolveUrl(uriMatch[1], baseUrl);
             }
-            const ivMatch = line.match(/IV=(0x[0-9a-fA-F]+)/);
-            if (ivMatch) aesIv = ivMatch[1];
+            
+            const ivMatch = line.match(M3U8_REGEX.keyIv);
+            if (ivMatch) {
+                aesIv = ivMatch[1];
+            }
         }
     }
 
-    // 2. 提取流信息（分辨率、带宽）
+    // 提取流信息（分辨率、带宽）
     const streams = [];
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-            const resolutionMatch = line.match(/RESOLUTION=(\d+x\d+)/);
-            const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
-            
-            if (resolutionMatch && i + 1 < lines.length) {
-                const nextLine = lines[i + 1].trim();
-                if (nextLine && !nextLine.startsWith('#')) {
-                    const streamUrl = nextLine.startsWith('http') ? nextLine : new URL(nextLine, baseUrl).href;
-                    
-                    streams.push({
-                        resolution: resolutionMatch[1],
-                        // 关键点：保留 BANDWIDTH，Popup计算大小需要用到它
-                        bandwidth: bandwidthMatch ? bandwidthMatch[1] : null, 
-                        url: streamUrl
-                    });
-                }
-            }
-        }
+        const line = lines[i];
+        if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
+        
+        const resolutionMatch = line.match(M3U8_REGEX.resolution);
+        const bandwidthMatch = line.match(M3U8_REGEX.bandwidth);
+        
+        if (!resolutionMatch || i + 1 >= lines.length) continue;
+        
+        const nextLine = lines[i + 1];
+        if (!nextLine || nextLine.startsWith('#')) continue;
+        
+        const streamUrl = resolveUrl(nextLine, baseUrl);
+        streams.push({
+            resolution: resolutionMatch[1],
+            bandwidth: bandwidthMatch ? bandwidthMatch[1] : null,
+            url: streamUrl
+        });
     }
     
     if (streams.length === 0) return null;
     
-    // ================== 修复核心：恢复时长预获取 ==================
-    // 这一步会发起一个额外的网络请求去获取子列表，从而计算时长
+    // 预获取视频时长（用于 UI 显示）
     let duration = null;
-    try { 
-        // 随便取第一个流来计算总时长（通常所有分辨率时长一致）
-        if (streams.length > 0) {
-            // 调用下方的 getVideoDuration 辅助函数
-            duration = await getVideoDuration(streams[0].url);
-        }
+    try {
+        duration = await getVideoDuration(streams[0].url);
     } catch (e) {
         console.warn('[RPlay] 预获取时长失败，UI将不显示时长:', e);
     }
-    // ==========================================================
     
     return { 
         streams, 
         aesKeyUrl, 
         aesIv, 
         baseUrl, 
-        duration // 将时长返回给 videoInfo，Popup 就能拿到了
+        duration
     };
 }
 
-// 获取视频时长
+/**
+ * 获取视频总时长（通过解析子 m3u8 文件中的 #EXTINF 标签）
+ */
 async function getVideoDuration(streamUrl) {
   try {
     const response = await fetch(streamUrl);
+    if (!response.ok) return null;
+    
     const m3u8Content = await response.text();
     const lines = m3u8Content.split('\n');
     
     let totalDuration = 0;
-    
-    for (let line of lines) {
-      line = line.trim();
-      // 查找 #EXTINF 标签，格式如：#EXTINF:10.0,
-      if (line.startsWith('#EXTINF:')) {
-        const durationMatch = line.match(/#EXTINF:([\d.]+)/);
-        if (durationMatch) {
-          totalDuration += parseFloat(durationMatch[1]);
-        }
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('#EXTINF:')) continue;
+      
+      const match = trimmed.match(M3U8_REGEX.extInf);
+      if (match) {
+        totalDuration += parseFloat(match[1]);
       }
     }
     
     return totalDuration > 0 ? totalDuration : null;
   } catch (error) {
-    console.error('解析视频时长失败:', error);
+    console.error('[RPlay] 解析视频时长失败:', error);
     return null;
   }
 }
 
+// ================== 消息处理 ==================
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'GET_VIDEO_INFO') {
+  const { type } = request;
+  
+  if (type === 'GET_VIDEO_INFO') {
     const tabId = request.tabId;
-    if (videoInfo[tabId] && videoInfo[tabId].length > 0) {
+    if (videoInfo[tabId]?.length > 0) {
       sendResponse({ videos: videoInfo[tabId] });
     } else {
       chrome.storage.local.get([tabId.toString()], (result) => {
         sendResponse({ videos: result[tabId.toString()] || [] });
       });
-      return true;
+      return true; // 保持消息通道开放以支持异步响应
     }
-  } else if (request.type === 'GET_DOWNLOAD_STATE') {
+  } else if (type === 'GET_DOWNLOAD_STATE') {
     sendResponse({ state: downloadStates[request.tabId] || null });
-  } else if (request.type === 'DOWNLOAD_VIDEO') {
+  } else if (type === 'DOWNLOAD_VIDEO') {
     downloadVideo(request.data, request.tabId, request.downloadId);
     sendResponse({ success: true });
-  } else if (request.type === 'DOWNLOAD_PROGRESS_UPDATE') {
-    const progress = Math.round((request.completed / request.total) * 100);
+  } else if (type === 'DOWNLOAD_PROGRESS_UPDATE') {
+    const { completed, total, speed } = request;
+    const progress = Math.round((completed / total) * 100);
+    
     updateDownloadState(request.tabId, {
-      progress: progress,
-      completedSegments: request.completed,
-      totalSegments: request.total,
-      speed: request.speed,
+      progress,
+      completedSegments: completed,
+      totalSegments: total,
+      speed,
       status: progress === 100 ? 'merging' : 'downloading',
-      message: progress === 100 ? '下载完成，正在收尾...' : `下载中 ${request.completed}/${request.total}`
+      message: progress === 100 ? '下载完成，正在收尾...' : `下载中 ${completed}/${total}`
     });
-    broadcastMessage({ type: 'DOWNLOAD_PROGRESS', tabId: request.tabId, progress, state: downloadStates[request.tabId] });
+    
+    broadcastMessage({ 
+      type: 'DOWNLOAD_PROGRESS', 
+      tabId: request.tabId, 
+      progress, 
+      state: downloadStates[request.tabId] 
+    });
+    
     sendResponse({ success: true });
   }
+  
   return true;
 });
 
-// 3. 主下载逻辑
+/**
+ * 解析子 m3u8 文件，提取 TS 片段 URL 和其他信息
+ */
+function parseSubM3u8(content, baseUrl) {
+  const lines = content.split('\n').map(line => line.trim());
+  const tsUrls = [];
+  let mediaSequence = 0;
+  
+  // 提取媒体序列号
+  const seqMatch = content.match(M3U8_REGEX.mediaSequence);
+  if (seqMatch) {
+    mediaSequence = parseInt(seqMatch[1], 10);
+  }
+  
+  // 提取 TS 片段 URL
+  for (const line of lines) {
+    if (line && !line.startsWith('#')) {
+      tsUrls.push(resolveUrl(line, baseUrl));
+    }
+  }
+  
+  return { tsUrls, mediaSequence };
+}
+
+// ================== 下载逻辑 ==================
+
+/**
+ * 主下载函数：解析 m3u8 并启动 TS 片段下载
+ */
 async function downloadVideo(videoData, tabId, downloadId = '0-0') {
   const statsId = `${tabId}-${Date.now()}`;
+  
   try {
-    downloadStates[tabId] = { status: 'downloading', progress: 0, speed: 0, message: '准备下载...', downloadId };
-    downloadStats[statsId] = { startTime: Date.now(), downloadedSize: 0 };
-    broadcastMessage({ type: 'DOWNLOAD_STARTED', tabId: tabId, state: downloadStates[tabId] });
+    // 初始化下载状态
+    downloadStates[tabId] = { 
+      status: 'downloading', 
+      progress: 0, 
+      speed: 0, 
+      message: '准备下载...', 
+      downloadId 
+    };
+    downloadStats[statsId] = { 
+      startTime: Date.now(), 
+      downloadedSize: 0 
+    };
+    
+    broadcastMessage({ type: 'DOWNLOAD_STARTED', tabId, state: downloadStates[tabId] });
     updateBadge('↓', '#007bff', tabId);
     
     const { streamUrl, aesKeyUrl, aesIv, resolution } = videoData;
     
     updateDownloadState(tabId, { status: 'preparing', message: '解析视频列表...', progress: 0 });
     
+    // 获取并解析子 m3u8 文件
     const response = await fetch(streamUrl);
-    const m3u8Content = await response.text();
-    
-    // 解析 Sequence
-    let realMediaSequence = 0;
-    const seqMatch = m3u8Content.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
-    if (seqMatch) realMediaSequence = parseInt(seqMatch[1], 10);
-
-    // 计算总时长
-    let totalDuration = 0;
-    const durationMatches = m3u8Content.matchAll(/#EXTINF:([\d.]+)/g);
-    for (const match of durationMatches) {
-        totalDuration += parseFloat(match[1]);
+    if (!response.ok) {
+      throw new Error(`获取视频列表失败: HTTP ${response.status}`);
     }
-    console.log(`[RPlay] 视频总时长: ${totalDuration}秒`);
-
-    const tsUrls = [];
+    
+    const m3u8Content = await response.text();
     const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
-    m3u8Content.split('\n').forEach(line => {
-      line = line.trim();
-      if (line && !line.startsWith('#')) {
-        tsUrls.push(line.startsWith('http') ? line : baseUrl + line);
-      }
-    });
+    const { tsUrls, mediaSequence } = parseSubM3u8(m3u8Content, baseUrl);
     
-    if (tsUrls.length === 0) throw new Error('未找到视频片段');
+    if (tsUrls.length === 0) {
+      throw new Error('未找到视频片段');
+    }
     
-    let filename = `rplay_${resolution}_${Date.now()}.mp4`; 
+    console.log(`[RPlay] 解析到 ${tsUrls.length} 个视频片段`);
+    
+    // 生成文件名
+    let filename = `rplay_${resolution}_${Date.now()}.ts`;
     try {
-      const results = await chrome.scripting.executeScript({ target: { tabId }, func: () => document.title });
-      if (results?.[0]?.result) filename = `${results[0].result.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100)}_${resolution}_${Date.now()}.mp4`;
-    } catch (e) {}
+      const results = await chrome.scripting.executeScript({ 
+        target: { tabId }, 
+        func: () => document.title 
+      });
+      if (results?.[0]?.result) {
+        filename = sanitizeFilename(results[0].result, resolution, '.ts');
+      }
+    } catch (e) {
+      // 忽略获取标题失败
+    }
     
     updateDownloadState(tabId, { 
-      status: 'downloading', message: `准备下载 ${tsUrls.length} 个片段`, totalSegments: tsUrls.length, completedSegments: 0 
+      status: 'downloading', 
+      message: `准备下载 ${tsUrls.length} 个片段`, 
+      totalSegments: tsUrls.length, 
+      completedSegments: 0 
     });
 
-    // 调用注入脚本
-    await downloadWithMux(
-        tsUrls, 
-        aesKeyUrl || null, 
-        aesIv || null, 
-        realMediaSequence, 
-        filename, 
-        tabId, 
-        statsId,
-        totalDuration || 0 
+    // 启动 TS 片段下载
+    await downloadTsSegments(
+      tsUrls, 
+      aesKeyUrl || null, 
+      aesIv || null, 
+      mediaSequence, 
+      filename, 
+      tabId, 
+      statsId
     );
     
   } catch (error) {
-    console.error('下载出错:', error);
-    updateBadge('✗', '#dc3545', tabId);
-    updateDownloadState(tabId, { status: 'error', message: error.message || '下载失败' });
-    broadcastMessage({ type: 'DOWNLOAD_ERROR', tabId: tabId, error: error.message, state: downloadStates[tabId] });
-    setTimeout(() => {
-        updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
-        delete downloadStates[tabId];
-        delete downloadStats[statsId];
-    }, 3000);
+    handleDownloadError(error, tabId, statsId);
   }
 }
 
-// ================== 核心：严谨模式下载 (Strict Mode) ==================
-async function downloadWithMux(tsUrls, aesKeyUrl, aesIvString, seqOffset, filename, tabId, statsId, durationSec) {
-  const limit = CONCURRENT_LIMIT; 
+/**
+ * 统一处理下载错误
+ */
+function handleDownloadError(error, tabId, statsId) {
+  console.error('[RPlay] 下载出错:', error);
+  updateBadge('✗', '#dc3545', tabId);
+  updateDownloadState(tabId, { 
+    status: 'error', 
+    message: error.message || '下载失败' 
+  });
+  broadcastMessage({ 
+    type: 'DOWNLOAD_ERROR', 
+    tabId, 
+    error: error.message, 
+    state: downloadStates[tabId] 
+  });
+  
+  // 3秒后恢复 badge 并清理状态
+  setTimeout(() => {
+    updateBadge(videoInfo[tabId]?.length.toString() || '', '#667eea', tabId);
+    delete downloadStates[tabId];
+    delete downloadStats[statsId];
+  }, 3000);
+}
 
-  try {
-    await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ['libs/mux.min.js'] });
-  } catch (e) {
-    throw new Error("无法加载 libs/mux.min.js");
-  }
+// ================== TS 片段下载 ==================
 
+/**
+ * 解析 IV 字符串为 Uint8Array
+ */
+function parseIV(ivHex) {
+  if (!ivHex) return null;
+  const hex = ivHex.replace('0x', '');
+  const match = hex.match(/.{1,2}/g);
+  if (!match) return null;
+  return new Uint8Array(match.map(byte => parseInt(byte, 16)));
+}
+
+/**
+ * 生成动态 IV（基于序列号）
+ */
+function generateIV(sequenceNumber) {
+  const iv = new Uint8Array(16);
+  new DataView(iv.buffer).setUint32(12, sequenceNumber, false);
+  return iv;
+}
+
+/**
+ * 下载并保存 TS 片段
+ */
+async function downloadTsSegments(tsUrls, aesKeyUrl, aesIvString, seqOffset, filename, tabId, statsId) {
   await chrome.scripting.executeScript({
-    target: { tabId: tabId },
-    func: async (urls, keyUrl, ivHex, startSeq, fname, bgTabId, concurrentLimit, totalDuration) => {
-	  let writable = null;
+    target: { tabId },
+    func: async (urls, keyUrl, ivHex, startSeq, fname, bgTabId, concurrentLimit) => {
+      let writable = null;
       try {
-        console.log(`[RPlay] 开始严谨模式下载: ${fname}, 时长: ${totalDuration}s`);
+        console.log(`[RPlay] 开始下载 TS 文件: ${fname}`);
         
-        const Mux = window.muxjs || window.mux;
-        if (!Mux) throw new Error("Mux.js 未加载");
-
-        // 注入时长补丁
-        const injectDuration = (initSegment, duration) => {
-            if (!duration || duration <= 0) return initSegment;
-            const data = new Uint8Array(initSegment);
-            const view = new DataView(data.buffer);
-            let offset = 0;
-            while (offset < data.length) {
-                const size = view.getUint32(offset);
-                const type = String.fromCharCode(data[offset+4],data[offset+5],data[offset+6],data[offset+7]);
-                if (type === 'moov') {
-                    let subOffset = offset + 8;
-                    const moovEnd = offset + size;
-                    while (subOffset < moovEnd) {
-                        const subSize = view.getUint32(subOffset);
-                        const subType = String.fromCharCode(data[subOffset+4],data[subOffset+5],data[subOffset+6],data[subOffset+7]);
-                        if (subType === 'mvhd') {
-                            const timescaleOffset = subOffset + 20;
-                            const durationOffset = subOffset + 24;
-                            const timescale = view.getUint32(timescaleOffset);
-                            const durationUnits = Math.floor(duration * timescale);
-                            view.setUint32(durationOffset, durationUnits);
-                            console.log(`[RPlay] 头部时长注入成功: ${duration}s`);
-                            return data;
-                        }
-                        subOffset += subSize;
-                    }
-                }
-                offset += size;
-            }
-            return data;
-        };
-
+        // 请求用户选择保存位置
         let fileHandle;
         try {
           fileHandle = await window.showSaveFilePicker({
             suggestedName: fname,
-            types: [{ description: 'MP4 Video File', accept: { 'video/mp4': ['.mp4'] } }],
+            types: [{ description: 'TS Video File', accept: { 'video/mp2t': ['.ts'] } }],
           });
         } catch (err) {
-          if (err.name === 'AbortError') return { success: false, error: '用户取消保存' };
+          if (err.name === 'AbortError') {
+            return { success: false, error: '用户取消保存' };
+          }
           throw err;
         }
 
         writable = await fileHandle.createWritable();
-        const transmuxer = new Mux.mp4.Transmuxer({ keepOriginalTimestamps: false }); 
-        
-        let mp4Buffer = [];
-        let initSegmentWritten = false;
 
-        transmuxer.on('data', (segment) => { mp4Buffer.push(segment); });
-
+        // 初始化加密相关
         let cryptoKey = null;
         let staticIv = null;
         if (keyUrl) {
           const keyResp = await fetch(keyUrl);
-          if (!keyResp.ok) throw new Error("密钥下载失败"); // Fail fast
+          if (!keyResp.ok) throw new Error("密钥下载失败");
           const keyData = await keyResp.arrayBuffer();
-          cryptoKey = await crypto.subtle.importKey('raw', keyData, { name: 'AES-CBC' }, false, ['decrypt']);
+          cryptoKey = await crypto.subtle.importKey(
+            'raw', 
+            keyData, 
+            { name: 'AES-CBC' }, 
+            false, 
+            ['decrypt']
+          );
           if (ivHex) {
-             const hex = ivHex.replace('0x', '');
-             const match = hex.match(/.{1,2}/g);
-             if (match) staticIv = new Uint8Array(match.map(byte => parseInt(byte, 16)));
+            const hex = ivHex.replace('0x', '');
+            const match = hex.match(/.{1,2}/g);
+            if (match) {
+              staticIv = new Uint8Array(match.map(byte => parseInt(byte, 16)));
+            }
           }
         }
 
-        let nextIndexToProcess = 0;     
-        let currentIndexToFetch = 0;    
-        let downloadedCache = new Map(); 
+        // 下载状态管理
+        let nextIndexToProcess = 0;
+        let currentIndexToFetch = 0;
+        const downloadedCache = new Map();
         let totalBytes = 0;
         let completedCount = 0;
-        let isAborted = false; // 全局中断标志
+        let isAborted = false;
         
+        // 进度报告（节流：每秒最多一次）
         let lastReportTime = Date.now();
         let lastBytes = 0;
-        const report = () => {
+        const reportProgress = () => {
           const now = Date.now();
           if (now - lastReportTime >= 1000) {
             const speed = (totalBytes - lastBytes) / ((now - lastReportTime) / 1000);
@@ -366,181 +510,204 @@ async function downloadWithMux(tsUrls, aesKeyUrl, aesIvString, seqOffset, filena
               tabId: bgTabId,
               completed: completedCount,
               total: urls.length,
-              speed: speed
+              speed
             }, '*');
             lastReportTime = now;
             lastBytes = totalBytes;
           }
         };
 
+        // 生成动态 IV（基于序列号）- 必须在注入脚本内部定义
+        const generateIV = (sequenceNumber) => {
+          const iv = new Uint8Array(16);
+          new DataView(iv.buffer).setUint32(12, sequenceNumber, false);
+          return iv;
+        };
+
+        // 解密数据
+        const decryptData = async (data, index) => {
+          if (!cryptoKey) return data;
+          
+          const iv = staticIv || generateIV(startSeq + index);
+          try {
+            return await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, cryptoKey, data);
+          } catch (decryptErr) {
+            throw new Error(`片段 ${index} 解密失败: ${decryptErr.message}`);
+          }
+        };
+
+        // 下载并处理单个片段
+        const downloadSegment = async (index, url) => {
+          if (isAborted) return;
+          
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          
+          let data = await resp.arrayBuffer();
+          data = await decryptData(data, index);
+          
+          downloadedCache.set(index, data);
+          
+          // 按顺序写入文件
+          while (downloadedCache.has(nextIndexToProcess) && !isAborted) {
+            const chunk = downloadedCache.get(nextIndexToProcess);
+            downloadedCache.delete(nextIndexToProcess);
+            
+            await writable.write(chunk);
+            totalBytes += chunk.byteLength;
+            completedCount++;
+            nextIndexToProcess++;
+          }
+          
+          reportProgress();
+        };
+
+        // 并发下载工作线程
         const worker = async () => {
-          while (currentIndexToFetch < urls.length) {
-            if (isAborted) return; // 检查是否已终止
-
-            const myIndex = currentIndexToFetch++; 
-            const url = urls[myIndex];
+          while (currentIndexToFetch < urls.length && !isAborted) {
+            const myIndex = currentIndexToFetch++;
             try {
-              const resp = await fetch(url);
-              if (!resp.ok) throw new Error(`HTTP ${resp.status}`); // 网络错误直接抛出
-
-              let data = await resp.arrayBuffer();
-              
-              if (cryptoKey) {
-                let iv;
-                if (staticIv) {
-                    iv = staticIv;
-                } else {
-                    const sequenceNumber = startSeq + myIndex;
-                    iv = new Uint8Array(16);
-                    new DataView(iv.buffer).setUint32(12, sequenceNumber, false); 
-                }
-                
-                try {
-                    data = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, cryptoKey, data);
-                } catch (decryptErr) {
-                    // 解密失败：严谨模式下直接抛出异常，不进行重试
-                    throw new Error(`片段 ${myIndex} 解密失败: ${decryptErr.message}`);
-                }
-              }
-
-              downloadedCache.set(myIndex, data);
-              
-              // 顺序处理
-              while (downloadedCache.has(nextIndexToProcess)) {
-                if (isAborted) return;
-
-                const chunk = downloadedCache.get(nextIndexToProcess);
-                downloadedCache.delete(nextIndexToProcess); 
-                
-                try {
-                    transmuxer.push(new Uint8Array(chunk));
-                    transmuxer.flush();
-
-                    while (mp4Buffer.length > 0) {
-                        const segment = mp4Buffer.shift();
-                        if (segment.initSegment && !initSegmentWritten) {
-                             const patchedInit = injectDuration(segment.initSegment, totalDuration);
-                             await writable.write(patchedInit);
-                             initSegmentWritten = true;
-                        }
-                        if (segment.data) await writable.write(segment.data);
-                    }
-                } catch (muxErr) { 
-                    // 转码失败：直接抛出异常
-                    throw new Error(`片段 ${nextIndexToProcess} 转码失败: ${muxErr.message}`);
-                }
-                
-                totalBytes += chunk.byteLength;
-                completedCount++;
-                nextIndexToProcess++;
-              }
-              report();
+              await downloadSegment(myIndex, urls[myIndex]);
             } catch (err) {
-              isAborted = true; // 标记终止
-              console.error(`片段 ${myIndex} 严重错误，终止下载`, err);
-              throw err; // 向上传递错误，触发 Promise.all 的 reject
+              isAborted = true;
+              console.error(`[RPlay] 片段 ${myIndex} 下载失败:`, err);
+              throw err;
             }
           }
         };
 
-        const promises = [];
+        // 启动并发下载
         const actualLimit = Math.min(concurrentLimit, urls.length);
-        for (let i = 0; i < actualLimit; i++) {
-          promises.push(worker());
-        }
-
+        const promises = Array.from({ length: actualLimit }, () => worker());
         await Promise.all(promises);
 
         if (!isAborted) {
-            while (mp4Buffer.length > 0) {
-                 const segment = mp4Buffer.shift();
-                 if (segment.data) await writable.write(segment.data);
-            }
-            transmuxer.off('data');
-            await writable.close();
-            return { success: true, totalBytes: totalBytes };
+          await writable.close();
+          return { success: true, totalBytes };
         } else {
-            // 如果已终止，尝试关闭文件（虽然可能已经损坏）
-            try { await writable.close(); } catch(e){}
-            throw new Error("下载任务因错误被强制终止");
+          try { await writable.close(); } catch (e) {}
+          throw new Error("下载任务因错误被强制终止");
         }
 
-      } catch (err) { 
-          return { success: false, error: err.message }; 
+      } catch (err) {
+        return { success: false, error: err.message };
       } finally {
-		  if (writable) {
-			  try {
-				  await writable.close();
-			  } catch (e) {
-				  //console.warn("关闭文件流时出错 (可能已关闭):", e);
-			  }
-		  }
-	  }
+        if (writable) {
+          try {
+            await writable.close();
+          } catch (e) {
+            // 文件可能已关闭，忽略错误
+          }
+        }
+      }
     },
-    // 修复点：将 totalDuration 修改为 durationSec
-    args: [tsUrls, aesKeyUrl, aesIvString, seqOffset, filename, tabId, limit, durationSec]
+    args: [tsUrls, aesKeyUrl, aesIvString, seqOffset, filename, tabId, CONCURRENT_LIMIT]
   }).then((results) => {
-    if (results && results[0] && results[0].result && results[0].result.success) {
-      const totalTime = (Date.now() - downloadStats[statsId].startTime) / 1000;
-      const totalBytes = results[0].result.totalBytes || 0;
-      updateDownloadState(tabId, { 
-        status: 'completed', message: `下载完成！`, progress: 100,
-        totalTime, avgSpeed: totalBytes > 0 ? totalBytes / totalTime : 0, downloadedSize: totalBytes
-      });
-      updateBadge('✓', '#28a745', tabId);
-      broadcastMessage({ type: 'DOWNLOAD_COMPLETE', tabId, filename, state: downloadStates[tabId] });
-      setTimeout(() => {
-        updateBadge(videoInfo[tabId] ? videoInfo[tabId].length.toString() : '', '#667eea', tabId);
-        delete downloadStates[tabId];
-        delete downloadStats[statsId];
-      }, 3000);
+    const result = results?.[0]?.result;
+    
+    if (result?.success) {
+      handleDownloadSuccess(tabId, statsId, filename, result.totalBytes || 0);
     } else {
-      const error = results?.[0]?.result?.error || '未知错误';
+      const error = result?.error || '未知错误';
       throw new Error(error);
     }
   }).catch((error) => {
-    console.error('下载失败:', error);
-    updateBadge('✗', '#dc3545', tabId);
-    updateDownloadState(tabId, { status: 'error', message: error.message });
-    broadcastMessage({ type: 'DOWNLOAD_ERROR', tabId, error: error.message, state: downloadStates[tabId] });
+    handleDownloadError(error, tabId, statsId);
   });
 }
 
+/**
+ * 处理下载成功
+ */
+function handleDownloadSuccess(tabId, statsId, filename, totalBytes) {
+  const totalTime = (Date.now() - downloadStats[statsId].startTime) / 1000;
+  const avgSpeed = totalBytes > 0 ? totalBytes / totalTime : 0;
+  
+  updateDownloadState(tabId, {
+    status: 'completed',
+    message: '下载完成！',
+    progress: 100,
+    totalTime,
+    avgSpeed,
+    downloadedSize: totalBytes
+  });
+  
+  updateBadge('✓', '#28a745', tabId);
+  broadcastMessage({ type: 'DOWNLOAD_COMPLETE', tabId, filename, state: downloadStates[tabId] });
+  
+  // 3秒后恢复 badge 并清理状态
+  setTimeout(() => {
+    updateBadge(videoInfo[tabId]?.length.toString() || '', '#667eea', tabId);
+    delete downloadStates[tabId];
+    delete downloadStats[statsId];
+  }, 3000);
+}
+
+// ================== 工具函数 ==================
+
+/**
+ * 更新下载状态并广播
+ */
 function updateDownloadState(tabId, updates) {
-  if (!downloadStates[tabId]) downloadStates[tabId] = {};
+  if (!downloadStates[tabId]) {
+    downloadStates[tabId] = {};
+  }
   Object.assign(downloadStates[tabId], updates);
   broadcastMessage({ type: 'DOWNLOAD_STATE_UPDATE', tabId, state: downloadStates[tabId] });
 }
+
+/**
+ * 广播消息到所有监听器
+ */
 function broadcastMessage(message) {
   chrome.runtime.sendMessage(message).catch(() => {});
-  if (message.tabId) chrome.tabs.sendMessage(message.tabId, message).catch(() => {});
-}
-function updateBadge(text, color, tabId) {
-  if (tabId) {
-    chrome.action.setBadgeText({ text, tabId });
-    chrome.action.setBadgeBackgroundColor({ color, tabId });
-  } else {
-    chrome.action.setBadgeText({ text });
-    chrome.action.setBadgeBackgroundColor({ color });
+  if (message.tabId) {
+    chrome.tabs.sendMessage(message.tabId, message).catch(() => {});
   }
 }
+
+/**
+ * 更新扩展图标 Badge
+ */
+function updateBadge(text, color, tabId) {
+  const badgeOptions = tabId 
+    ? { text, color, tabId }
+    : { text, color };
+    
+  chrome.action.setBadgeText({ text: badgeOptions.text, tabId: badgeOptions.tabId });
+  chrome.action.setBadgeBackgroundColor({ color: badgeOptions.color, tabId: badgeOptions.tabId });
+}
+
+/**
+ * 清理标签页相关数据
+ */
+function cleanupTabData(tabId) {
+  if (videoInfo[tabId]) {
+    chrome.storage.local.remove(tabId.toString());
+    delete videoInfo[tabId];
+  }
+  delete downloadStates[tabId];
+  delete tabUrls[tabId];
+}
+// ================== 标签页事件监听 ==================
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || (changeInfo.status === 'loading' && tab.url)) {
-    const currentUrl = changeInfo.url || tab.url;
-    const previousUrl = tabUrls[tabId];
-    if (changeInfo.status === 'loading' || (previousUrl && previousUrl !== currentUrl)) {
-      if (videoInfo[tabId]) { delete videoInfo[tabId]; chrome.storage.local.remove(tabId.toString()); }
-      updateBadge('', '#666666', tabId);
-      if (downloadStates[tabId]) delete downloadStates[tabId];
-    }
+  const currentUrl = changeInfo.url || tab.url;
+  const previousUrl = tabUrls[tabId];
+  const isUrlChanged = changeInfo.url || (changeInfo.status === 'loading' && tab.url);
+  
+  if (isUrlChanged && (changeInfo.status === 'loading' || (previousUrl && previousUrl !== currentUrl))) {
+    cleanupTabData(tabId);
+    updateBadge('', '#666666', tabId);
+  }
+  
+  if (currentUrl) {
     tabUrls[tabId] = currentUrl;
   }
 });
+
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (videoInfo[tabId]) chrome.storage.local.remove(tabId.toString());
-  delete videoInfo[tabId];
-  delete downloadStates[tabId];
-  delete tabUrls[tabId];
+  cleanupTabData(tabId);
 });
 
 console.log('RPlay Video Downloader (Fail-Fast Mode) loaded');
