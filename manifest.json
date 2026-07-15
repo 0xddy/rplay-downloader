@@ -1,26 +1,27 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.2.3",
+  "version": "2.0.0",
+  "minimum_chrome_version": "116",
   "description": "__MSG_extDescription__",
   "default_locale": "zh_CN",
   "permissions": [
     "webRequest",
     "storage",
     "downloads",
-    "scripting"
+    "offscreen"
   ],
   "host_permissions": [
     "*://*.rplay.live/*",
     "*://*.rplay-cdn.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "dist/background.js"
   },
   "content_scripts": [
     {
       "matches": ["*://rplay.live/*"],
-      "js": ["content.js"],
+      "js": ["dist/content.js"],
       "run_at": "document_start"
     }
   ],

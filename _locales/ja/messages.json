@@ -75,6 +75,10 @@
     "message": "ダウンロード",
     "description": "Download button text"
   },
+  "processing": {
+    "message": "処理中...",
+    "description": "Active task status"
+  },
   "downloading": {
     "message": "ダウンロード中...",
     "description": "Downloading status"
@@ -149,6 +153,14 @@
       }
     }
   },
+  "downloadMp4Button": { "message": "MP4をダウンロード", "description": "MP4 download button" },
+  "backgroundTasks": { "message": "バックグラウンドタスク", "description": "Background task section" },
+  "cancelButton": { "message": "キャンセル", "description": "Cancel task button" },
+  "queued": { "message": "待機中", "description": "Queued task state" },
+  "remuxing": { "message": "MP4へ無変換リマックス中", "description": "Remux task state" },
+  "fallbackTs": { "message": "TSへフォールバック中", "description": "TS fallback task state" },
+  "completed": { "message": "完了", "description": "Completed task state" },
+  "failed": { "message": "失敗", "description": "Failed task state" },
   "footerText": {
     "message": "この拡張機能が気に入りましたか？Starをお願いします",
     "description": "Footer text"

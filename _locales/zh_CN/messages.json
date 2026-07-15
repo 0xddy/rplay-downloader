@@ -75,6 +75,10 @@
     "message": "下载",
     "description": "Download button text"
   },
+  "processing": {
+    "message": "正在处理...",
+    "description": "Active task status"
+  },
   "downloading": {
     "message": "下载中...",
     "description": "Downloading status"
@@ -149,6 +153,14 @@
       }
     }
   },
+  "downloadMp4Button": { "message": "下载 MP4", "description": "MP4 download button" },
+  "backgroundTasks": { "message": "后台任务", "description": "Background task section" },
+  "cancelButton": { "message": "取消", "description": "Cancel task button" },
+  "queued": { "message": "排队中", "description": "Queued task state" },
+  "remuxing": { "message": "无转码封装 MP4", "description": "Remux task state" },
+  "fallbackTs": { "message": "回退下载 TS", "description": "TS fallback task state" },
+  "completed": { "message": "已完成", "description": "Completed task state" },
+  "failed": { "message": "失败", "description": "Failed task state" },
   "footerText": {
     "message": "喜欢本插件请给个 Star 吧",
     "description": "Footer text"

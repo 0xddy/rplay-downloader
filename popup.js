@@ -1,435 +1,356 @@
-// 初始化国际化文本
-function initI18n() {
-  // 设置页面文本
-  document.getElementById('headerTitle').textContent = '🧿 ' + chrome.i18n.getMessage('headerTitle');
-  document.getElementById('headerSubtitle').textContent = chrome.i18n.getMessage('headerSubtitle');
-  document.getElementById('noVideoTitle').textContent = chrome.i18n.getMessage('noVideoDetected');
-  
-  // 处理包含换行的描述文本
-  const desc = chrome.i18n.getMessage('noVideoDescription');
-  document.getElementById('noVideoDesc').innerHTML = desc.replace(/\n/g, '<br>');
-  
-  document.getElementById('footerText').textContent = chrome.i18n.getMessage('footerText');
-  document.getElementById('githubText').textContent = chrome.i18n.getMessage('github');
+import { createSourceId, estimateMediaBytes } from './src/media.js';
+import {
+  ACTIVE_TASK_PHASES,
+  MessageType,
+  TASK_EVENT_MESSAGE_TYPES,
+  TaskPhase,
+} from './src/protocol.js';
+
+let currentTabId = null;
+let currentTasks = [];
+let videos = [];
+
+function message(key, substitutions, fallback = '') {
+  return chrome.i18n.getMessage(key, substitutions) || fallback;
 }
 
-// 当前下载状态
-let downloadingStates = {};
-let currentTabId = null;
+function initI18n() {
+  document.getElementById('headerTitle').textContent = `📥 ${message('headerTitle', null, 'RPlay Video Downloader')}`;
+  document.getElementById('headerSubtitle').textContent = message('headerSubtitle', null, '一键下载 rplay.live 视频');
+  document.getElementById('noVideoTitle').textContent = message('noVideoDetected', null, '未检测到视频');
+  document.getElementById('noVideoDesc').textContent = message('noVideoDescription', null, '请打开 RPlay 视频播放页面');
+  document.getElementById('footerText').textContent = message('footerText', null, '喜欢本插件请给个 Star');
+  document.getElementById('githubText').textContent = message('github', null, 'GitHub');
+}
 
-// 初始化
 document.addEventListener('DOMContentLoaded', async () => {
-  // 初始化国际化文本
   initI18n();
-  
-  // 获取当前标签页ID
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) {
-    currentTabId = tab.id;
-  }
-  
-  // 加载视频列表（会在加载完成后自动恢复下载状态）
-  loadVideos();
-  
-  // 监听来自background的消息
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.type === 'DOWNLOAD_STARTED') {
-      handleDownloadStarted(request.tabId, request.state);
-    } else if (request.type === 'DOWNLOAD_PROGRESS') {
-      updateProgress(request.tabId, request.progress, request.state);
-    } else if (request.type === 'DOWNLOAD_STATE_UPDATE') {
-      updateDownloadState(request.tabId, request.state);
-    } else if (request.type === 'DOWNLOAD_COMPLETE') {
-      handleDownloadComplete(request.tabId, request.filename, request.state);
-    } else if (request.type === 'DOWNLOAD_ERROR') {
-      handleDownloadError(request.tabId, request.error, request.state);
+  currentTabId = tab?.id ?? null;
+  await Promise.all([loadVideos(), loadTasks()]);
+  render();
+
+  chrome.runtime.onMessage.addListener((request) => {
+    if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
+    upsertTask(request.task);
+
+    if (ACTIVE_TASK_PHASES.has(request.task.phase)) {
+      if (!patchTaskProgress(request.task)) attachTaskProgress(request.task);
+    } else {
+      removeTaskProgress(request.task.taskId);
+    }
+    syncVideoButtons();
+    syncEmptyState();
+
+    if (request.type === MessageType.TASK_COMPLETED) showCompletion(request.task);
+    if (request.type === MessageType.TASK_ERROR && request.task.error !== '下载任务已取消') {
+      showStatusMessage(request.task.error || '下载失败', 'error');
     }
   });
 });
 
-// 恢复下载状态
-async function restoreDownloadState() {
+async function loadVideos() {
   if (!currentTabId) return;
-  
-  chrome.runtime.sendMessage(
-    { type: 'GET_DOWNLOAD_STATE', tabId: currentTabId },
-    (response) => {
-      if (response && response.state) {
-        const state = response.state;
-        console.log('恢复下载状态:', state);
-        
-        // 如果正在下载，需要找到对应的下载项并恢复UI
-        if (state.status === 'downloading' || state.status === 'preparing' || 
-            state.status === 'merging' || state.status === 'converting' || state.status === 'saving') {
-          
-          // 使用保存的downloadId
-          const downloadId = state.downloadId || '0-0';
-          const progressContainer = document.getElementById(`progress-${downloadId}`);
-          
-          if (progressContainer) {
-            progressContainer.classList.add('active');
-            updateProgressUI(downloadId, state);
-            
-            // 禁用所有下载按钮
-            document.querySelectorAll('.download-btn').forEach(btn => {
-              btn.disabled = true;
-            });
-            
-            downloadingStates[currentTabId] = downloadId;
-          }
-        }
-      }
-    }
-  );
+  const response = await chrome.runtime.sendMessage({
+    type: MessageType.GET_VIDEO_INFO,
+    tabId: currentTabId,
+  }).catch(() => null);
+  videos = response?.videos || [];
 }
 
-// 加载视频列表
-async function loadVideos() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  
-  if (!tab || !tab.url || !tab.url.includes('rplay.live')) {
-    showEmptyState();
+async function loadTasks() {
+  const response = await chrome.runtime.sendMessage({ type: MessageType.GET_TASKS }).catch(() => null);
+  currentTasks = response?.tasks || [];
+}
+
+function upsertTask(task) {
+  const index = currentTasks.findIndex((item) => item.taskId === task.taskId);
+  if (index >= 0) currentTasks[index] = task;
+  else currentTasks.unshift(task);
+}
+
+function getActiveTasks() {
+  return currentTasks.filter((task) => ACTIVE_TASK_PHASES.has(task.phase));
+}
+
+function getSourceTask(sourceId) {
+  return getActiveTasks().find((task) => (
+    task.tabId === currentTabId && task.sourceId === sourceId
+  ));
+}
+
+function render() {
+  const list = document.getElementById('videoList');
+  const renderedTaskIds = new Set();
+  list.replaceChildren();
+
+  videos.forEach((video, index) => {
+    list.appendChild(createVideoItem(video, index, renderedTaskIds));
+  });
+  for (const task of getActiveTasks()) {
+    if (!renderedTaskIds.has(task.taskId)) list.appendChild(createDetachedTaskItem(task));
+  }
+  syncEmptyState();
+}
+
+function syncEmptyState() {
+  const list = document.getElementById('videoList');
+  const empty = list.children.length === 0;
+  document.getElementById('emptyState').style.display = empty ? 'block' : 'none';
+  list.style.display = empty ? 'none' : 'block';
+}
+
+function progressValue(task) {
+  return Math.max(0, Math.min(100, Math.round(task.progress || 0)));
+}
+
+function createTaskProgress(task) {
+  const progress = document.createElement('div');
+  progress.className = 'inline-task-progress';
+  progress.dataset.taskId = task.taskId;
+
+  const track = document.createElement('div');
+  track.className = 'inline-progress-track';
+  const bar = document.createElement('div');
+  bar.className = 'inline-progress-bar';
+  bar.dataset.taskBar = '';
+  bar.style.width = `${progressValue(task)}%`;
+  track.appendChild(bar);
+
+  const footer = document.createElement('div');
+  footer.className = 'inline-progress-footer';
+  const speed = document.createElement('span');
+  speed.className = 'inline-progress-speed';
+  speed.dataset.taskSpeed = '';
+  speed.textContent = formatSpeed(task.speed || 0);
+
+  const actions = document.createElement('div');
+  actions.className = 'inline-progress-actions';
+  const value = document.createElement('strong');
+  value.className = 'inline-progress-value';
+  value.dataset.taskProgress = '';
+  value.textContent = `${progressValue(task)}%`;
+  const cancel = document.createElement('button');
+  cancel.className = 'inline-cancel-btn';
+  cancel.textContent = message('cancelButton', null, '取消');
+  cancel.addEventListener('click', () => cancelTask(task.taskId, cancel));
+  actions.append(value, cancel);
+  footer.append(speed, actions);
+  progress.append(track, footer);
+  return progress;
+}
+
+function patchTaskProgress(task) {
+  const progress = document.querySelector(`[data-task-id="${CSS.escape(task.taskId)}"]`);
+  if (!progress) return false;
+  const value = progressValue(task);
+  progress.querySelector('[data-task-bar]').style.width = `${value}%`;
+  progress.querySelector('[data-task-progress]').textContent = `${value}%`;
+  progress.querySelector('[data-task-speed]').textContent = formatSpeed(task.speed || 0);
+  return true;
+}
+
+function attachTaskProgress(task) {
+  if (!ACTIVE_TASK_PHASES.has(task.phase)) return;
+  if (document.querySelector(`[data-task-id="${CSS.escape(task.taskId)}"]`)) return;
+
+  const shell = task.tabId === currentTabId
+    ? document.querySelector(`[data-stream-source-id="${CSS.escape(task.sourceId || '')}"]`)
+    : null;
+  if (shell) {
+    shell.classList.add('has-task');
+    shell.appendChild(createTaskProgress(task));
+  } else {
+    document.getElementById('videoList').appendChild(createDetachedTaskItem(task));
+  }
+}
+
+function removeTaskProgress(taskId) {
+  const progress = document.querySelector(`[data-task-id="${CSS.escape(taskId)}"]`);
+  if (!progress) return;
+  const detached = progress.closest('.detached-task-item');
+  if (detached) {
+    detached.remove();
     return;
   }
-  
-  chrome.runtime.sendMessage(
-    { type: 'GET_VIDEO_INFO', tabId: tab.id },
-    (response) => {
-      if (response && response.videos && response.videos.length > 0) {
-        displayVideos(response.videos, tab.id);
-        // 视频列表加载完成后，恢复下载状态
-        setTimeout(() => restoreDownloadState(), 100);
-      } else {
-        showEmptyState();
-      }
+  const shell = progress.closest('.stream-shell');
+  progress.remove();
+  shell?.classList.remove('has-task');
+}
+
+async function cancelTask(taskId, button) {
+  button.disabled = true;
+  const response = await chrome.runtime.sendMessage({
+    type: MessageType.CANCEL_TASK,
+    taskId,
+  }).catch((error) => ({ success: false, error: error?.message || String(error) }));
+  if (!response?.success) {
+    button.disabled = false;
+    showStatusMessage(response?.error || '取消任务失败', 'error');
+  }
+}
+
+function syncVideoButtons() {
+  document.querySelectorAll('[data-source-id]').forEach((button) => {
+    button.disabled = Boolean(getSourceTask(button.dataset.sourceId));
+    button.textContent = message('downloadButton', null, '下载');
+  });
+}
+
+function createVideoItem(video, videoIndex, renderedTaskIds) {
+  const item = document.createElement('div');
+  item.className = 'video-item video-card';
+  const header = document.createElement('div');
+  header.className = 'video-header';
+  const title = document.createElement('div');
+  title.className = 'video-title';
+  title.textContent = video.title && video.title !== 'rplay'
+    ? video.title
+    : message('videoNumber', [(videoIndex + 1).toString()], `视频 #${videoIndex + 1}`);
+  title.title = title.textContent;
+  const time = document.createElement('div');
+  time.className = 'video-time';
+  time.textContent = video.duration ? formatDuration(video.duration) : new Date(video.timestamp).toLocaleTimeString();
+  header.append(title, time);
+  item.appendChild(header);
+
+  video.streams.forEach((stream) => {
+    const sourceId = createSourceId(video.baseUrl, stream.url);
+    const shell = document.createElement('div');
+    shell.className = 'stream-shell';
+    shell.dataset.streamSourceId = sourceId;
+    const row = document.createElement('div');
+    row.className = 'stream-option';
+    const info = document.createElement('div');
+    info.className = 'stream-info';
+    const resolution = document.createElement('div');
+    resolution.className = 'resolution';
+    resolution.append(document.createTextNode(stream.resolution || `${stream.width}x${stream.height}`));
+    const qualityBadge = document.createElement('span');
+    qualityBadge.className = `quality-badge ${stream.height >= 1080 ? 'quality-fhd' : stream.height >= 720 ? 'quality-hd' : 'quality-sd'}`;
+    qualityBadge.textContent = stream.height >= 1080
+      ? message('qualityHigh', null, '高清')
+      : stream.height >= 720
+        ? message('qualityStandard', null, '标清')
+        : message('qualityLow', null, '低清');
+    resolution.appendChild(qualityBadge);
+    const bandwidth = document.createElement('div');
+    bandwidth.className = 'bandwidth';
+    const bitrate = stream.bandwidth
+      ? `${(stream.bandwidth / 1_000_000).toFixed(2)} Mbps`
+      : message('unknown', null, '未知');
+    const estimatedBytes = estimateMediaBytes(stream.bandwidth, video.duration);
+    bandwidth.textContent = `${message('bitrate', null, '码率')}: ${bitrate}${
+      estimatedBytes ? ` · ~${formatSize(estimatedBytes)}` : ''
+    }`;
+    info.append(resolution, bandwidth);
+
+    const button = document.createElement('button');
+    button.className = 'download-btn';
+    button.dataset.sourceId = sourceId;
+    button.textContent = message('downloadButton', null, '下载');
+    button.disabled = Boolean(getSourceTask(sourceId));
+    button.addEventListener('click', () => startDownload(video, stream, sourceId, button));
+    row.append(info, button);
+    shell.appendChild(row);
+
+    const task = getSourceTask(sourceId);
+    if (task) {
+      shell.classList.add('has-task');
+      shell.appendChild(createTaskProgress(task));
+      renderedTaskIds.add(task.taskId);
     }
+    item.appendChild(shell);
+  });
+  return item;
+}
+
+function createDetachedTaskItem(task) {
+  const item = document.createElement('div');
+  item.className = 'video-item video-card detached-task-item';
+  const header = document.createElement('div');
+  header.className = 'video-header compact-header';
+  const title = document.createElement('div');
+  title.className = 'video-title';
+  title.textContent = task.title || task.resolution;
+  title.title = title.textContent;
+  const resolution = document.createElement('div');
+  resolution.className = 'video-time';
+  resolution.textContent = task.resolution;
+  header.append(title, resolution);
+  item.append(header, createTaskProgress(task));
+  return item;
+}
+
+async function startDownload(video, stream, sourceId, button) {
+  button.disabled = true;
+  const pageInfo = await chrome.tabs.sendMessage(currentTabId, {
+    type: MessageType.GET_PAGE_VIDEO_TITLE,
+  }).catch(() => null);
+  const response = await chrome.runtime.sendMessage({
+    type: MessageType.DOWNLOAD_VIDEO,
+    tabId: currentTabId,
+    sourceId,
+    data: {
+      masterUrl: video.baseUrl,
+      streamUrl: stream.url,
+      audioUrl: stream.audioUrl || null,
+      title: pageInfo?.title || video.title,
+      resolution: stream.resolution,
+      width: stream.width,
+      height: stream.height,
+      bandwidth: stream.bandwidth,
+      duration: video.duration,
+      hasExternalAudio: stream.hasExternalAudio,
+      sessionKeys: video.sessionKeys || [],
+    },
+  }).catch((error) => ({ success: false, error: error?.message || String(error) }));
+  if (!response?.success) {
+    button.disabled = false;
+    showStatusMessage(response?.error || '无法创建下载任务', 'error');
+    return;
+  }
+  upsertTask(response.task);
+  attachTaskProgress(response.task);
+  syncVideoButtons();
+  syncEmptyState();
+}
+
+function showCompletion(task) {
+  const suffix = task.actualFormat === 'ts'
+    ? `（MP4 不兼容，已保存原始 TS：${task.fallbackReason || '未知原因'}）`
+    : '';
+  showStatusMessage(
+    `${message('downloadComplete', [task.filename || ''], '下载完成')} ${suffix}`,
+    task.actualFormat === 'ts' ? 'warning' : 'success',
   );
 }
 
-// 显示空状态
-function showEmptyState() {
-  document.getElementById('emptyState').style.display = 'block';
-  document.getElementById('videoList').style.display = 'none';
-}
-
-// 显示视频列表
-function displayVideos(videos, tabId) {
-  document.getElementById('emptyState').style.display = 'none';
-  document.getElementById('videoList').style.display = 'block';
-  
-  const videoList = document.getElementById('videoList');
-  videoList.innerHTML = '';
-  
-  videos.forEach((video, videoIndex) => {
-    const videoItem = createVideoItem(video, videoIndex, tabId);
-    videoList.appendChild(videoItem);
-  });
-}
-
-// 创建视频项
-function createVideoItem(video, videoIndex, tabId) {
-  const videoItem = document.createElement('div');
-  videoItem.className = 'video-item';
-  videoItem.id = `video-${videoIndex}`;
-  
-  // 使用时长或时间戳
-  let displayTime;
-  if (video.duration && video.duration > 0) {
-    displayTime = formatDuration(video.duration);
-  } else {
-    displayTime = new Date(video.timestamp).toLocaleTimeString('zh-CN');
-  }
-  
-  let streamsHtml = '';
-  video.streams.forEach((stream, streamIndex) => {
-    const resolution = stream.resolution;
-    const [width, height] = resolution.split('x').map(Number);
-    
-    // 根据分辨率高度判断清晰度标签
-    let qualityBadge = '';
-    let qualityText = '';
-    if (height >= 1080) {
-      qualityText = chrome.i18n.getMessage('qualityHigh');
-      qualityBadge = `<span class="quality-badge quality-fhd">${qualityText}</span>`;
-    } else if (height >= 720) {
-      qualityText = chrome.i18n.getMessage('qualityStandard');
-      qualityBadge = `<span class="quality-badge quality-hd">${qualityText}</span>`;
-    } else {
-      qualityText = chrome.i18n.getMessage('qualityLow');
-      qualityBadge = `<span class="quality-badge quality-sd">${qualityText}</span>`;
-    }
-    
-    const bandwidth = stream.bandwidth 
-      ? `${(parseInt(stream.bandwidth) / 1000000).toFixed(2)} Mbps` 
-      : chrome.i18n.getMessage('unknown');
-    
-    // 计算预估文件大小
-    let estimatedSize = '';
-    if (stream.bandwidth && video.duration) {
-      const bandwidthBps = parseInt(stream.bandwidth); // bits per second (峰值)
-      const durationSeconds = video.duration;
-      
-      // 实际码率通常是峰值的 65-70%，这里使用 0.68 作为系数
-      // 因为 HLS 流通常使用 VBR 编码，BANDWIDTH 是峰值而非平均值
-      const actualBandwidth = bandwidthBps * 0.68;
-      
-      const totalBits = actualBandwidth * durationSeconds;
-      const totalBytes = totalBits / 8; // 转换为字节
-      estimatedSize = ` • ~${formatSize(totalBytes)}`;
-    }
-    
-    const downloadId = `${videoIndex}-${streamIndex}`;
-    
-    streamsHtml += `
-      <div class="stream-option" data-download-id="${downloadId}">
-        <div class="stream-info">
-          <div class="resolution">${resolution}${qualityBadge}</div>
-		  <div class="bandwidth">${chrome.i18n.getMessage('bitrate')}: ${bandwidth}${estimatedSize}</div>
-        </div>
-        <button class="download-btn" data-stream-index="${streamIndex}" data-video-index="${videoIndex}">
-          ${chrome.i18n.getMessage('downloadButton')}
-        </button>
-      </div>
-      <div class="progress-container" id="progress-${downloadId}">
-        <div class="progress-text">
-          <span id="progress-text-${downloadId}">${chrome.i18n.getMessage('downloading')}</span>
-          <span>
-            <span id="speed-text-${downloadId}" class="speed-text" style="display: none;"></span>
-            <span id="progress-percent-${downloadId}">0%</span>
-          </span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar" id="progress-bar-${downloadId}"></div>
-        </div>
-      </div>
-    `;
-  });
-  
-  videoItem.innerHTML = `
-    <div class="video-header">
-      <div class="video-title">${chrome.i18n.getMessage('videoNumber', [(videoIndex + 1).toString()])}</div>
-      <div class="video-time">${displayTime}</div>
-    </div>
-    ${streamsHtml}
-  `;
-  
-  // 为每个下载按钮添加事件监听
-  videoItem.querySelectorAll('.download-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const streamIndex = parseInt(e.target.dataset.streamIndex);
-      const videoIndex = parseInt(e.target.dataset.videoIndex);
-      startDownload(video, streamIndex, videoIndex, tabId);
-    });
-  });
-  
-  return videoItem;
-}
-
-// 开始下载
-function startDownload(video, streamIndex, videoIndex, tabId) {
-  const stream = video.streams[streamIndex];
-  const downloadId = `${videoIndex}-${streamIndex}`;
-  
-  // 禁用所有下载按钮
-  document.querySelectorAll('.download-btn').forEach(btn => {
-    btn.disabled = true;
-  });
-  
-  // 显示进度条
-  const progressContainer = document.getElementById(`progress-${downloadId}`);
-  if (progressContainer) {
-    progressContainer.classList.add('active');
-  }
-  
-  // 记录下载状态
-  downloadingStates[tabId] = downloadId;
-  
-  // 发送下载请求到background
-  chrome.runtime.sendMessage({
-    type: 'DOWNLOAD_VIDEO',
-    tabId: tabId,
-    downloadId: downloadId,  // 传递downloadId
-    data: {
-      streamUrl: stream.url,
-      aesKeyUrl: video.aesKeyUrl,
-      resolution: stream.resolution
-    }
-  });
-}
-
-// 处理下载开始
-function handleDownloadStarted(tabId, state) {
-  console.log('下载已开始', state);
-}
-
-// 更新进度
-function updateProgress(tabId, progress, state) {
-  const downloadId = downloadingStates[tabId];
-  if (!downloadId) return;
-  
-  updateProgressUI(downloadId, state || { progress });
-}
-
-// 更新下载状态
-function updateDownloadState(tabId, state) {
-  const downloadId = downloadingStates[tabId];
-  if (!downloadId) return;
-  
-  updateProgressUI(downloadId, state);
-}
-
-// 更新进度UI
-function updateProgressUI(downloadId, state) {
-  const progressBar = document.getElementById(`progress-bar-${downloadId}`);
-  const progressPercent = document.getElementById(`progress-percent-${downloadId}`);
-  const progressText = document.getElementById(`progress-text-${downloadId}`);
-  const speedText = document.getElementById(`speed-text-${downloadId}`);
-  
-  if (progressBar && state.progress !== undefined) {
-    progressBar.style.width = `${state.progress}%`;
-  }
-  
-  if (progressPercent && state.progress !== undefined) {
-    progressPercent.textContent = `${state.progress}%`;
-  }
-  
-  if (progressText) {
-    let text = chrome.i18n.getMessage('downloading');
-    
-    if (state.status === 'preparing') {
-      text = state.message || chrome.i18n.getMessage('preparing');
-    } else if (state.status === 'downloading') {
-      if (state.completedSegments && state.totalSegments) {
-        text = chrome.i18n.getMessage('downloadingSegments', [
-          state.completedSegments.toString(), 
-          state.totalSegments.toString()
-        ]);
-      } else {
-        text = state.message || chrome.i18n.getMessage('downloading');
-      }
-    } else if (state.status === 'merging') {
-      text = chrome.i18n.getMessage('merging');
-    } else if (state.status === 'converting') {
-      text = chrome.i18n.getMessage('converting');
-    } else if (state.status === 'saving') {
-      text = chrome.i18n.getMessage('saving');
-    }
-    
-    progressText.textContent = text;
-  }
-  
-  if (speedText && state.speed !== undefined) {
-    const speed = formatSpeed(state.speed);
-    speedText.textContent = speed;
-    speedText.style.display = state.speed > 0 ? 'inline' : 'none';
-  }
-}
-
-// 格式化速度
-function formatSpeed(bytesPerSecond) {
-  if (bytesPerSecond < 1024) {
-    return `${bytesPerSecond.toFixed(0)} B/s`;
-  } else if (bytesPerSecond < 1024 * 1024) {
-    return `${(bytesPerSecond / 1024).toFixed(2)} KB/s`;
-  } else {
-    return `${(bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s`;
-  }
-}
-
-// 格式化时长
-function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) {
-    return chrome.i18n.getMessage('unknown') || '未知';
-  }
-  
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  // 始终显示 00:00:00 格式
-  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-}
-
-// 格式化大小
-function formatSize(bytes) {
-  if (bytes < 1024) {
-    return `${bytes.toFixed(0)}B`;
-  } else if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(2)}KB`;
-  } else if (bytes < 1024 * 1024 * 1024) {
-    return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
-  } else {
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`;
-  }
-}
-
-// 处理下载完成
-function handleDownloadComplete(tabId, filename, state) {
-  const downloadId = downloadingStates[tabId];
-  
-  // 隐藏进度条
-  if (downloadId) {
-    const progressContainer = document.getElementById(`progress-${downloadId}`);
-    if (progressContainer) {
-      // 显示完成状态3秒后再隐藏
-      setTimeout(() => {
-        progressContainer.classList.remove('active');
-      }, 3000);
-    }
-  }
-  
-  // 启用所有按钮
-  document.querySelectorAll('.download-btn').forEach(btn => {
-    btn.disabled = false;
-  });
-  
-  // 显示成功消息
-  let message = chrome.i18n.getMessage('downloadComplete', [filename]);
-  if (state && state.totalTime) {
-    message += '\n' + chrome.i18n.getMessage('timeElapsed', [state.totalTime.toFixed(1)]);
-  }
-  if (state && state.avgSpeed) {
-    message += ' | ' + chrome.i18n.getMessage('avgSpeed', [formatSpeed(state.avgSpeed)]);
-  }
-  
-  showStatusMessage(message, 'success');
-  
-  // 清理状态
-  delete downloadingStates[tabId];
-}
-
-// 处理下载错误
-function handleDownloadError(tabId, error, state) {
-  const downloadId = downloadingStates[tabId];
-  
-  // 隐藏进度条
-  if (downloadId) {
-    const progressContainer = document.getElementById(`progress-${downloadId}`);
-    if (progressContainer) {
-      progressContainer.classList.remove('active');
-    }
-  }
-  
-  // 启用所有按钮
-  document.querySelectorAll('.download-btn').forEach(btn => {
-    btn.disabled = false;
-  });
-  
-  // 显示错误消息
-  showStatusMessage(chrome.i18n.getMessage('downloadFailed', [error]), 'error');
-  
-  // 清理状态
-  delete downloadingStates[tabId];
-}
-
-// 显示状态消息
-function showStatusMessage(message, type) {
-  const statusMessage = document.getElementById('statusMessage');
-  statusMessage.textContent = message;
-  statusMessage.className = `status-message ${type}`;
-  
-  // 5秒后自动隐藏
+function showStatusMessage(text, type) {
+  const element = document.getElementById('statusMessage');
+  element.textContent = text;
+  element.className = `status-message ${type}`;
   setTimeout(() => {
-    statusMessage.className = 'status-message';
-  }, 5000);
+    if (element.textContent === text) element.className = 'status-message';
+  }, 8_000);
+}
+
+function formatSpeed(bytesPerSecond) {
+  if (!bytesPerSecond) return '0 B/s';
+  return `${formatSize(bytesPerSecond)}/s`;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainder = total % 60;
+  return [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
 }

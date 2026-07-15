@@ -1,0 +1,23 @@
+{
+  "name": "rplay-downloader",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "pnpm lint && pnpm test && pnpm build",
+    "lint": "node scripts/check.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "mediabunny": "1.50.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.6",
+    "vitest": "3.2.4"
+  }
+}

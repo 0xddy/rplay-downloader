@@ -75,6 +75,10 @@
     "message": "다운로드",
     "description": "Download button text"
   },
+  "processing": {
+    "message": "처리 중...",
+    "description": "Active task status"
+  },
   "downloading": {
     "message": "다운로드 중...",
     "description": "Downloading status"
@@ -149,6 +153,14 @@
       }
     }
   },
+  "downloadMp4Button": { "message": "MP4 다운로드", "description": "MP4 download button" },
+  "backgroundTasks": { "message": "백그라운드 작업", "description": "Background task section" },
+  "cancelButton": { "message": "취소", "description": "Cancel task button" },
+  "queued": { "message": "대기 중", "description": "Queued task state" },
+  "remuxing": { "message": "MP4 무손실 리먹싱 중", "description": "Remux task state" },
+  "fallbackTs": { "message": "TS로 전환 중", "description": "TS fallback task state" },
+  "completed": { "message": "완료", "description": "Completed task state" },
+  "failed": { "message": "실패", "description": "Failed task state" },
   "footerText": {
     "message": "이 확장 프로그램이 마음에 드시나요? Star를 눌러주세요",
     "description": "Footer text"
