@@ -24,7 +24,8 @@ ${streamUrl || ""}`;
 
   // src/naming.js
   function normalizeVideoTitle(value) {
-    return String(value || "").normalize("NFC").replace(/\s+/g, " ").replace(/\s*[|｜]\s*RPLAY\s*$/i, "").trim();
+    const normalized = String(value || "").normalize("NFC").replace(/\s+/g, " ").replace(/\s*[|｜]\s*RPLAY\s*$/i, "").trim();
+    return /^(?:rplay|rplay\.live)$/i.test(normalized) ? "" : normalized;
   }
   function sanitizeFilename(value) {
     const cleaned = normalizeVideoTitle(value || "rplay").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim();

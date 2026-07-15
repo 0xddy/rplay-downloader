@@ -1,4 +1,4 @@
-import { normalizeVideoTitle } from './src/naming.js';
+import { selectVideoTitle } from './src/naming.js';
 import { MessageType } from './src/protocol.js';
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
@@ -9,15 +9,19 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 function extractVideoTitle() {
-  const heading = document.querySelector('h2.font-weight-bold.text-body-lg');
+  const currentHeading = document.querySelector('h2.font-weight-bold.text-content-primary');
+  const legacyHeading = document.querySelector('h2.font-weight-bold.text-body-lg');
   const openGraph = document.querySelector('meta[property="og:title"]');
   const twitter = document.querySelector('meta[name="twitter:title"]');
-  return normalizeVideoTitle(
-    heading?.textContent
-      || openGraph?.getAttribute('content')
-      || twitter?.getAttribute('content')
-      || document.title,
-  );
+  // RPlay uses client-side navigation. Meta tags can still describe the
+  // previous video, so prefer live DOM and tab title before metadata.
+  return selectVideoTitle([
+    currentHeading?.textContent,
+    legacyHeading?.textContent,
+    document.title,
+    openGraph?.getAttribute('content'),
+    twitter?.getAttribute('content'),
+  ]);
 }
 
 function ensureStyles() {

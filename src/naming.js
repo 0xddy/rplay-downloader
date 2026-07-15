@@ -1,9 +1,18 @@
 export function normalizeVideoTitle(value) {
-  return String(value || '')
+  const normalized = String(value || '')
     .normalize('NFC')
     .replace(/\s+/g, ' ')
     .replace(/\s*[|｜]\s*RPLAY\s*$/i, '')
     .trim();
+  return /^(?:rplay|rplay\.live)$/i.test(normalized) ? '' : normalized;
+}
+
+export function selectVideoTitle(candidates) {
+  for (const candidate of candidates) {
+    const title = normalizeVideoTitle(candidate);
+    if (title) return title;
+  }
+  return '';
 }
 
 export function sanitizeFilename(value) {

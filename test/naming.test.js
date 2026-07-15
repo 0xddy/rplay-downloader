@@ -1,7 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { makeDownloadFilename, normalizeVideoTitle, sanitizeFilename } from '../src/naming.js';
+import {
+  makeDownloadFilename,
+  normalizeVideoTitle,
+  sanitizeFilename,
+  selectVideoTitle,
+} from '../src/naming.js';
 
 describe('download filename', () => {
+  it('rejects the RPlay placeholder and selects the first real SPA title', () => {
+    expect(normalizeVideoTitle('RPLAY')).toBe('');
+    expect(normalizeVideoTitle('rplay.live')).toBe('');
+    expect(selectVideoTitle([
+      'RPLAY',
+      '[当前视频标题] | RPLAY',
+      '[上一条视频标题]',
+    ])).toBe('[当前视频标题]');
+  });
+
   it('uses the video title without the RPLAY tab suffix', () => {
     const title = normalizeVideoTitle('  视频 标题 | RPLAY  ');
     expect(title).toBe('视频 标题');

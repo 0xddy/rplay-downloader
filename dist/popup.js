@@ -22,6 +22,12 @@ ${streamUrl || ""}`;
     return `${(second >>> 0).toString(36)}${(first >>> 0).toString(36)}`;
   }
 
+  // src/naming.js
+  function normalizeVideoTitle(value) {
+    const normalized = String(value || "").normalize("NFC").replace(/\s+/g, " ").replace(/\s*[|｜]\s*RPLAY\s*$/i, "").trim();
+    return /^(?:rplay|rplay\.live)$/i.test(normalized) ? "" : normalized;
+  }
+
   // src/protocol.js
   var TaskPhase = Object.freeze({
     QUEUED: "queued",
@@ -106,6 +112,7 @@ ${streamUrl || ""}`;
   var currentTabId = null;
   var currentTasks = [];
   var videos = [];
+  var currentPageTitle = "";
   function message(key, substitutions, fallback = "") {
     return chrome.i18n.getMessage(key, substitutions) || fallback;
   }
@@ -121,7 +128,7 @@ ${streamUrl || ""}`;
     initI18n();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     currentTabId = tab?.id ?? null;
-    await Promise.all([loadVideos(), loadTasks()]);
+    await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
     render();
     chrome.runtime.onMessage.addListener((request) => {
       if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
@@ -150,6 +157,13 @@ ${streamUrl || ""}`;
   async function loadTasks() {
     const response = await chrome.runtime.sendMessage({ type: MessageType.GET_TASKS }).catch(() => null);
     currentTasks = response?.tasks || [];
+  }
+  async function loadPageTitle() {
+    if (!currentTabId) return;
+    const pageInfo = await chrome.tabs.sendMessage(currentTabId, {
+      type: MessageType.GET_PAGE_VIDEO_TITLE
+    }).catch(() => null);
+    currentPageTitle = normalizeVideoTitle(pageInfo?.title);
   }
   function upsertTask(task) {
     const index = currentTasks.findIndex((item) => item.taskId === task.taskId);
@@ -271,7 +285,7 @@ ${streamUrl || ""}`;
     header.className = "video-header";
     const title = document.createElement("div");
     title.className = "video-title";
-    title.textContent = video.title && video.title !== "rplay" ? video.title : message("videoNumber", [(videoIndex + 1).toString()], `\u89C6\u9891 #${videoIndex + 1}`);
+    title.textContent = currentPageTitle || normalizeVideoTitle(video.title) || message("videoNumber", [(videoIndex + 1).toString()], `\u89C6\u9891 #${videoIndex + 1}`);
     title.title = title.textContent;
     const time = document.createElement("div");
     time.className = "video-time";
@@ -339,6 +353,8 @@ ${streamUrl || ""}`;
     const pageInfo = await chrome.tabs.sendMessage(currentTabId, {
       type: MessageType.GET_PAGE_VIDEO_TITLE
     }).catch(() => null);
+    const liveTitle = normalizeVideoTitle(pageInfo?.title);
+    if (liveTitle) currentPageTitle = liveTitle;
     const response = await chrome.runtime.sendMessage({
       type: MessageType.DOWNLOAD_VIDEO,
       tabId: currentTabId,
@@ -347,7 +363,7 @@ ${streamUrl || ""}`;
         masterUrl: video.baseUrl,
         streamUrl: stream.url,
         audioUrl: stream.audioUrl || null,
-        title: pageInfo?.title || video.title,
+        title: liveTitle || currentPageTitle || normalizeVideoTitle(video.title),
         resolution: stream.resolution,
         width: stream.width,
         height: stream.height,

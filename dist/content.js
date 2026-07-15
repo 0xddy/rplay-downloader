@@ -1,7 +1,15 @@
 (() => {
   // src/naming.js
   function normalizeVideoTitle(value) {
-    return String(value || "").normalize("NFC").replace(/\s+/g, " ").replace(/\s*[|｜]\s*RPLAY\s*$/i, "").trim();
+    const normalized = String(value || "").normalize("NFC").replace(/\s+/g, " ").replace(/\s*[|｜]\s*RPLAY\s*$/i, "").trim();
+    return /^(?:rplay|rplay\.live)$/i.test(normalized) ? "" : normalized;
+  }
+  function selectVideoTitle(candidates) {
+    for (const candidate of candidates) {
+      const title = normalizeVideoTitle(candidate);
+      if (title) return title;
+    }
+    return "";
   }
 
   // src/protocol.js
@@ -92,12 +100,17 @@
     }
   });
   function extractVideoTitle() {
-    const heading = document.querySelector("h2.font-weight-bold.text-body-lg");
+    const currentHeading = document.querySelector("h2.font-weight-bold.text-content-primary");
+    const legacyHeading = document.querySelector("h2.font-weight-bold.text-body-lg");
     const openGraph = document.querySelector('meta[property="og:title"]');
     const twitter = document.querySelector('meta[name="twitter:title"]');
-    return normalizeVideoTitle(
-      heading?.textContent || openGraph?.getAttribute("content") || twitter?.getAttribute("content") || document.title
-    );
+    return selectVideoTitle([
+      currentHeading?.textContent,
+      legacyHeading?.textContent,
+      document.title,
+      openGraph?.getAttribute("content"),
+      twitter?.getAttribute("content")
+    ]);
   }
   function ensureStyles() {
     if (document.getElementById("rplay-downloader-styles")) return;
