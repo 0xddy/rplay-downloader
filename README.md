@@ -2,8 +2,6 @@
 
 一个用于下载 `rplay.live` VOD/回放视频的 Chrome、Edge 浏览器扩展。
 
-无需安装 Node.js、pnpm 或 FFmpeg。下载项目 ZIP、解压，然后在浏览器中选择插件目录即可使用。
-
 ![RPlay Video Downloader 界面预览](screenshot/main-screenshot.png)
 
 ## 功能
