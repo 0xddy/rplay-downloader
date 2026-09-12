@@ -1,4 +1,5 @@
-import { getPrefetchableSegmentUrls } from './hls.js';
+import { getPrefetchableSegmentUrls, getUnsupportedHlsEncryption } from './hls.js';
+import { SourceError } from './errors.js';
 
 function inputUrl(input) {
   if (typeof input === 'string') return input;
@@ -88,6 +89,9 @@ export class HlsSegmentPrefetcher {
     const prepared = await Promise.all(urls.map(async (url) => {
       const record = await this.loadRecord(url);
       const text = new TextDecoder().decode(record.bytes);
+      if (getUnsupportedHlsEncryption(text)) {
+        throw new SourceError('已识别到 DRM / SAMPLE-AES 受保护媒体，当前扩展不支持下载', 'DRM_UNSUPPORTED');
+      }
       const segments = getPrefetchableSegmentUrls(text, record.finalUrl || url);
       return { requestUrl: url, record, segments };
     }));

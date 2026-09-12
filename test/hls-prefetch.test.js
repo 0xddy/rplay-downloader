@@ -1,7 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HlsSegmentPrefetcher } from '../src/hls-prefetch.js';
 
 describe('HLS segment prefetcher', () => {
+  it('reports unsupported encryption before any segment or key is prefetched', async () => {
+    const playlistUrl = 'https://cdn.example/index.m3u8';
+    const fetchFn = vi.fn(async () => new Response('#EXTM3U\n'
+      + '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="license"\n#EXTINF:4,\nvideo.cmfv\n#EXT-X-ENDLIST'));
+    const prefetcher = new HlsSegmentPrefetcher(fetchFn);
+    try {
+      await expect(prefetcher.prepare([playlistUrl])).rejects.toMatchObject({ code: 'DRM_UNSUPPORTED', kind: 'source' });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(fetchFn.mock.calls[0][0]).toBe(playlistUrl);
+      expect(prefetcher.jobs.size).toBe(0);
+    } finally {
+      prefetcher.dispose();
+    }
+  });
+
+  it('keeps clear CMAF byte-range playlists available for MP4 remuxing', async () => {
+    const playlistUrl = 'https://cdn.example/index.m3u8';
+    const playlist = '#EXTM3U\n#EXT-X-MAP:URI="video.cmfv",BYTERANGE="100@0"\n'
+      + '#EXTINF:4,\n#EXT-X-BYTERANGE:200@100\nvideo.cmfv\n#EXT-X-ENDLIST';
+    const fetchFn = vi.fn(async () => new Response(playlist));
+    const prefetcher = new HlsSegmentPrefetcher(fetchFn);
+    try {
+      await prefetcher.prepare([playlistUrl]);
+      expect(await (await prefetcher.fetch(playlistUrl)).text()).toBe(playlist);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(prefetcher.jobs.size).toBe(0);
+    } finally {
+      prefetcher.dispose();
+    }
+  });
+
   it('keeps five segment requests active and serves byte ranges from the prefetched result', async () => {
     const playlistUrl = 'https://cdn.example/video/index.m3u8';
     const playlist = [

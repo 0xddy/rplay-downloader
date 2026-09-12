@@ -117,6 +117,7 @@ ${streamUrl || ""}`;
     return chrome.i18n.getMessage(key, substitutions) || fallback;
   }
   function initI18n() {
+    document.getElementById("drmSettings").textContent = message("drmSettings", null, "DRM \u8BBE\u7F6E");
     document.getElementById("headerTitle").textContent = `\u{1F4E5} ${message("headerTitle", null, "RPlay Video Downloader")}`;
     document.getElementById("headerSubtitle").textContent = message("headerSubtitle", null, "\u4E00\u952E\u4E0B\u8F7D rplay.live \u89C6\u9891");
     document.getElementById("noVideoTitle").textContent = message("noVideoDetected", null, "\u672A\u68C0\u6D4B\u5230\u89C6\u9891");
@@ -131,6 +132,10 @@ ${streamUrl || ""}`;
     await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
     render();
     chrome.runtime.onMessage.addListener((request) => {
+      if (request.type === MessageType.VIDEO_DETECTED && request.tabId === currentTabId) {
+        void loadVideos().then(render);
+        return;
+      }
       if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
       upsertTask(request.task);
       if (ACTIVE_TASK_PHASES.has(request.task.phase)) {
@@ -292,6 +297,12 @@ ${streamUrl || ""}`;
     time.textContent = video.duration ? formatDuration(video.duration) : new Date(video.timestamp).toLocaleTimeString();
     header.append(title, time);
     item.appendChild(header);
+    if (video.unavailableReason && video.unavailableReason !== "dashProtected" && video.streams.length === 0) {
+      const notice = document.createElement("div");
+      notice.className = "bandwidth";
+      notice.textContent = `${video.sourceType?.toUpperCase() || ""} \xB7 ${message(video.unavailableReason)}`;
+      item.appendChild(notice);
+    }
     video.streams.forEach((stream) => {
       const sourceId = createSourceId(video.baseUrl, stream.url);
       const shell = document.createElement("div");
@@ -303,17 +314,23 @@ ${streamUrl || ""}`;
       info.className = "stream-info";
       const resolution = document.createElement("div");
       resolution.className = "resolution";
-      resolution.append(document.createTextNode(stream.resolution || `${stream.width}x${stream.height}`));
+      resolution.append(document.createTextNode(stream.resolution || message("originalQuality", null, "\u539F\u59CB\u753B\u8D28")));
       const qualityBadge = document.createElement("span");
       qualityBadge.className = `quality-badge ${stream.height >= 1080 ? "quality-fhd" : stream.height >= 720 ? "quality-hd" : "quality-sd"}`;
       qualityBadge.textContent = stream.height >= 1080 ? message("qualityHigh", null, "\u9AD8\u6E05") : stream.height >= 720 ? message("qualityStandard", null, "\u6807\u6E05") : message("qualityLow", null, "\u4F4E\u6E05");
-      resolution.appendChild(qualityBadge);
+      if (stream.height > 0) resolution.appendChild(qualityBadge);
       const bandwidth = document.createElement("div");
       bandwidth.className = "bandwidth";
       const bitrate = stream.bandwidth ? `${(stream.bandwidth / 1e6).toFixed(2)} Mbps` : message("unknown", null, "\u672A\u77E5");
       const estimatedBytes = estimateMediaBytes(stream.bandwidth, video.duration);
       bandwidth.textContent = `${message("bitrate", null, "\u7801\u7387")}: ${bitrate}${estimatedBytes ? ` \xB7 ~${formatSize(estimatedBytes)}` : ""}`;
       info.append(resolution, bandwidth);
+      if (stream.unavailableReason && stream.unavailableReason !== "dashProtected") {
+        const notice = document.createElement("div");
+        notice.className = "bandwidth";
+        notice.textContent = message(stream.unavailableReason);
+        info.appendChild(notice);
+      }
       const button = document.createElement("button");
       button.className = "download-btn";
       button.dataset.sourceId = sourceId;
@@ -360,11 +377,14 @@ ${streamUrl || ""}`;
       tabId: currentTabId,
       sourceId,
       data: {
+        sourceType: video.sourceType || "hls",
+        representationId: stream.representationId || null,
+        audioRepresentationId: stream.audioRepresentationId || null,
         masterUrl: video.baseUrl,
         streamUrl: stream.url,
         audioUrl: stream.audioUrl || null,
         title: liveTitle || currentPageTitle || normalizeVideoTitle(video.title),
-        resolution: stream.resolution,
+        resolution: stream.resolution || message("originalQuality", null, "\u539F\u59CB\u753B\u8D28"),
         width: stream.width,
         height: stream.height,
         bandwidth: stream.bandwidth,

@@ -4,7 +4,7 @@ export class ProgressReporter {
   constructor(task) {
     this.task = task;
     this.phase = TaskPhase.PREPARING;
-    this.message = '正在读取 HLS 信息…';
+    this.message = '正在读取媒体信息…';
     this.downloadedBytes = 0;
     this.totalBytes = task.estimatedBytes || null;
     this.mediaProgress = 0;

@@ -153,14 +153,58 @@
       }
     }
   },
-  "downloadMp4Button": { "message": "MP4をダウンロード", "description": "MP4 download button" },
-  "backgroundTasks": { "message": "バックグラウンドタスク", "description": "Background task section" },
-  "cancelButton": { "message": "キャンセル", "description": "Cancel task button" },
-  "queued": { "message": "待機中", "description": "Queued task state" },
-  "remuxing": { "message": "MP4へ無変換リマックス中", "description": "Remux task state" },
-  "fallbackTs": { "message": "TSへフォールバック中", "description": "TS fallback task state" },
-  "completed": { "message": "完了", "description": "Completed task state" },
-  "failed": { "message": "失敗", "description": "Failed task state" },
+  "drmUnsupported": {
+    "message": "DRM / SAMPLE-AES で保護されたメディアを検出しました。この拡張機能ではダウンロードできません。",
+    "description": "Protected source status"
+  },
+  "dashUnsupported": {
+    "message": "DASH マニフェストを検出しましたが、画質情報を取得できませんでした。ページを更新して再試行してください。",
+    "description": "DASH source status"
+  },
+  "dashLayoutUnsupported": {
+    "message": "この DASH 構成は未対応です。単一 Period のオンデマンド配信で、完全な MP4/CMAF 音声・映像トラックに対応しています。",
+    "description": "Unsupported DASH addressing or timeline"
+  },
+  "originalQuality": {
+    "message": "元の画質",
+    "description": "Quality label when resolution is not declared"
+  },
+  "cmafNeedsPlaylist": {
+    "message": "CMAF 映像トラックを検出しました。DASH または HLS から参照される形式です。このトラックだけでは完全な音声・映像構成やダウンロード対応を判断できません。",
+    "description": "CMAF track without a supported manifest"
+  },
+  "downloadMp4Button": {
+    "message": "MP4をダウンロード",
+    "description": "MP4 download button"
+  },
+  "backgroundTasks": {
+    "message": "バックグラウンドタスク",
+    "description": "Background task section"
+  },
+  "cancelButton": {
+    "message": "キャンセル",
+    "description": "Cancel task button"
+  },
+  "queued": {
+    "message": "待機中",
+    "description": "Queued task state"
+  },
+  "remuxing": {
+    "message": "MP4へ無変換リマックス中",
+    "description": "Remux task state"
+  },
+  "fallbackTs": {
+    "message": "TSへフォールバック中",
+    "description": "TS fallback task state"
+  },
+  "completed": {
+    "message": "完了",
+    "description": "Completed task state"
+  },
+  "failed": {
+    "message": "失敗",
+    "description": "Failed task state"
+  },
   "footerText": {
     "message": "この拡張機能が気に入りましたか？Starをお願いします",
     "description": "Footer text"
@@ -168,5 +212,38 @@
   "github": {
     "message": "Github",
     "description": "Github link text"
+  },
+  "drmSettings": {
+    "message": "DRM 設定"
+  },
+  "drmSetupHelp": {
+    "message": "内蔵デバイスで自動的に認証します。動画を再生し、画質を選んでダウンロードしてください。別のプログラムは不要です。"
+  },
+  "drmImport": {
+    "message": "別のデバイスを選択（任意）"
+  },
+  "drmSave": {
+    "message": "デバイスを読み込む"
+  },
+  "drmRestore": {
+    "message": "内蔵デバイスに戻す"
+  },
+  "drmBundledReady": {
+    "message": "内蔵デバイスを使用中"
+  },
+  "drmDeviceReady": {
+    "message": "カスタムデバイスを使用中"
+  },
+  "drmDeviceMissing": {
+    "message": "内蔵デバイスを使用できません。有効な .wvd v2 ファイルを読み込んでください。"
+  },
+  "drmChecking": {
+    "message": "デバイスを検証して保存中…"
+  },
+  "drmSaved": {
+    "message": "保存しました。次回のダウンロードから自動的に使用します。"
+  },
+  "drmInvalidDevice": {
+    "message": "読み込みに失敗しました。秘密鍵と証明書が一致する有効な .wvd v2 ファイルを選んでください。"
   }
 }

@@ -21,6 +21,8 @@ function createTask(overrides = {}) {
     masterUrl: 'https://example.test/master.m3u8?token=secret',
     streamUrl: 'https://example.test/video.m3u8?token=secret',
     sessionKeys: [{ uri: 'https://example.test/key' }],
+    licenseUrl: 'https://example.test/license?token=private',
+    cdmSettings: { port: 18889, token: 'private pairing code' },
     ...overrides,
   };
 }
@@ -52,5 +54,7 @@ describe('task store', () => {
     expect(visible.masterUrl).toBeUndefined();
     expect(visible.streamUrl).toBeUndefined();
     expect(visible.sessionKeys).toBeUndefined();
+    expect(visible.licenseUrl).toBeUndefined();
+    expect(visible.cdmSettings).toBeUndefined();
   });
 });

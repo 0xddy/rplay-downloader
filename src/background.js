@@ -1,4 +1,5 @@
 import { createSourceId, estimateMediaBytes } from './media.js';
+import { LICENSE_STORAGE_PREFIX, isWidevineLicenseUrl } from './cdm-client.js';
 import { makeDownloadFilename, normalizeVideoTitle } from './naming.js';
 import {
   ACTIVE_TASK_PHASES,
@@ -8,7 +9,7 @@ import {
   TaskPhase,
 } from './protocol.js';
 import { TaskStore, toPublicTask } from './task-store.js';
-import { inspectVideoSource, isRPlayMasterUrl } from './video-detector.js';
+import { inspectVideoSource, isKnownVideoSource, mergeVideoSources, shouldInspectMediaRequest } from './video-detector.js';
 
 const URL_CACHE_DURATION = 3_000;
 const CANCEL_CLEANUP_TIMEOUT = 8_000;
@@ -16,6 +17,7 @@ const TASKS_STORAGE_KEY = 'rplayDownloadTasksV2';
 const VIDEO_STORAGE_PREFIX = 'rplayVideos:';
 const videoInfo = new Map();
 const processedUrls = new Map();
+const detectionContexts = new Map();
 const queue = [];
 const pendingDownloads = new Map();
 const pendingFilenamesByUrl = new Map();
@@ -178,6 +180,12 @@ async function sendToOffscreen(message) {
 async function createDownloadTask(request) {
   await bootstrapPromise;
   const data = request.data || {};
+  const detectedVideo = (videoInfo.get(request.tabId) || []).find((video) => video.baseUrl === data.masterUrl);
+  const detectedStream = detectedVideo?.streams.find((stream) => stream.url === data.streamUrl);
+  // Let selected streams enter the worker, which validates the current manifest.
+  if (detectedVideo?.unavailableReason && !detectedStream) {
+    throw new Error('已识别到媒体，但当前扩展不支持下载此来源');
+  }
   if (!data.masterUrl || !data.streamUrl || !data.resolution) {
     throw new Error('下载参数不完整，请刷新页面后重试');
   }
@@ -205,6 +213,8 @@ async function createDownloadTask(request) {
     && ACTIVE_TASK_PHASES.has(task.phase)
   ));
   if (duplicate) return toPublicTask(duplicate);
+  const licenseKey = `${LICENSE_STORAGE_PREFIX}${request.tabId}`;
+  const licenseUrl = (await chrome.storage.session.get(licenseKey))[licenseKey];
   const task = {
     taskId,
     tabId: request.tabId,
@@ -217,6 +227,10 @@ async function createDownloadTask(request) {
     bandwidth,
     duration,
     estimatedBytes,
+    sourceType: detectedVideo?.sourceType || data.sourceType || 'hls',
+    licenseUrl: isWidevineLicenseUrl(licenseUrl) ? licenseUrl : null,
+    representationId: detectedStream?.representationId || data.representationId || null,
+    audioRepresentationId: detectedStream?.audioRepresentationId || data.audioRepresentationId || null,
     masterUrl: data.masterUrl,
     streamUrl: data.streamUrl,
     audioUrl: data.audioUrl || null,
@@ -346,6 +360,7 @@ async function finishTask(taskId) {
     completedAt,
     totalTime: elapsedSeconds,
     avgSpeed: task.downloadedBytes / elapsedSeconds,
+    licenseUrl: null,
     objectUrl: null,
     tempName: null,
   }, MessageType.TASK_COMPLETED);
@@ -383,6 +398,7 @@ async function failTask(taskId, message, { releaseSlot = true } = {}) {
   await updateTask(taskId, {
     phase: TaskPhase.ERROR,
     error: message || '下载失败',
+    licenseUrl: null,
     message: message || '下载失败',
     speed: 0,
     completedAt: Date.now(),
@@ -519,43 +535,59 @@ chrome.downloads.onChanged.addListener((delta) => {
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
-    const { url, tabId, type } = details;
-    if (!Number.isInteger(tabId) || tabId < 0) return;
-    if (type !== 'xmlhttprequest' && type !== 'other') return;
-    if (!isRPlayMasterUrl(url) || !shouldProcessUrl(tabId, url)) return;
+    const { url, tabId } = details;
+    if (isWidevineLicenseUrl(url)) {
+      if (tabId >= 0 && details.method === 'POST' && /^https:\/\/([\w-]+\.)*rplay\.live$/.test(details.initiator || '')) {
+        // Session storage is not exposed to content scripts. Never broadcast this URL.
+        void chrome.storage.session.set({ [`${LICENSE_STORAGE_PREFIX}${tabId}`]: url });
+      }
+      return;
+    }
+    if (!shouldInspectMediaRequest(details)) return;
+    if (isKnownVideoSource(videoInfo.get(tabId) || [], url) || !shouldProcessUrl(tabId, url)) return;
+    if (!detectionContexts.has(tabId)) detectionContexts.set(tabId, Symbol());
+    const context = detectionContexts.get(tabId);
 
     setTimeout(async () => {
       try {
+        if (detectionContexts.get(tabId) !== context || isKnownVideoSource(videoInfo.get(tabId) || [], url)) return;
         const detected = await inspectVideoSource(url, {
-          fetchFn: (input) => fetch(input, { credentials: 'include' }),
+          fetchFn: (input, init = {}) => fetch(input, { ...init, credentials: 'include' }),
           resolveTitle: () => resolvePageTitle(tabId),
           now: Date.now,
         });
-        if (!detected) return;
-        const list = videoInfo.get(tabId) || [];
-        if (list.some((video) => video.baseUrl === url)) return;
-        list.push(detected);
+        if (!detected || detectionContexts.get(tabId) !== context) return;
+        const previous = videoInfo.get(tabId) || [];
+        const list = mergeVideoSources(previous, detected);
+        if (list === previous) return;
         videoInfo.set(tabId, list);
         await chrome.storage.local.set({ [`${VIDEO_STORAGE_PREFIX}${tabId}`]: list });
         await updateBadge(String(list.length), '#666666', tabId);
-        chrome.tabs.sendMessage(tabId, { type: MessageType.VIDEO_DETECTED, data: detected }).catch(() => {});
+        broadcast({ type: MessageType.VIDEO_DETECTED, tabId, data: detected });
       } catch (error) {
-        console.error('[RPlay] 检测 HLS 失败:', error);
+        console.error('[RPlay] 检测媒体失败:', error);
       }
     }, 500);
   },
-  { urls: ['*://*.rplay-cdn.com/*', '*://*.rplay.live/*'] },
+  { urls: ['*://*.rplay-cdn.com/*', '*://*.rplay.live/*', 'https://widevine-dash.ezdrm.com/*'] },
 );
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+function clearTabDetection(tabId) {
+  detectionContexts.delete(tabId);
   videoInfo.delete(tabId);
+  for (const key of processedUrls.keys()) {
+    if (key.startsWith(`${tabId}:`)) processedUrls.delete(key);
+  }
   chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`).catch(() => {});
-});
+  chrome.storage.session.remove(`${LICENSE_STORAGE_PREFIX}${tabId}`).catch(() => {});
+}
+
+chrome.tabs.onRemoved.addListener(clearTabDetection);
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!changeInfo.url) return;
-  videoInfo.delete(tabId);
-  chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`).catch(() => {});
+  clearTabDetection(tabId);
+  void updateBadge('', '#666666', tabId);
 });
 
 setInterval(() => {

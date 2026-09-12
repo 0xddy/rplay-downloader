@@ -153,14 +153,58 @@
       }
     }
   },
-  "downloadMp4Button": { "message": "Download MP4", "description": "MP4 download button" },
-  "backgroundTasks": { "message": "Background tasks", "description": "Background task section" },
-  "cancelButton": { "message": "Cancel", "description": "Cancel task button" },
-  "queued": { "message": "Queued", "description": "Queued task state" },
-  "remuxing": { "message": "Remuxing to MP4", "description": "Remux task state" },
-  "fallbackTs": { "message": "Falling back to TS", "description": "TS fallback task state" },
-  "completed": { "message": "Completed", "description": "Completed task state" },
-  "failed": { "message": "Failed", "description": "Failed task state" },
+  "drmUnsupported": {
+    "message": "DRM / SAMPLE-AES protected media detected. This extension does not support downloading it.",
+    "description": "Protected source status"
+  },
+  "dashUnsupported": {
+    "message": "DASH manifest detected, but video renditions could not be read. Refresh the page and try again.",
+    "description": "DASH source status"
+  },
+  "dashLayoutUnsupported": {
+    "message": "This DASH layout is not supported. Single-period VOD with complete MP4/CMAF audio and video tracks is supported.",
+    "description": "Unsupported DASH addressing or timeline"
+  },
+  "originalQuality": {
+    "message": "Original quality",
+    "description": "Quality label when resolution is not declared"
+  },
+  "cmafNeedsPlaylist": {
+    "message": "CMAF video track detected. It may be referenced by DASH or HLS; this track alone does not establish the complete audio/video source or download support.",
+    "description": "CMAF track without a supported manifest"
+  },
+  "downloadMp4Button": {
+    "message": "Download MP4",
+    "description": "MP4 download button"
+  },
+  "backgroundTasks": {
+    "message": "Background tasks",
+    "description": "Background task section"
+  },
+  "cancelButton": {
+    "message": "Cancel",
+    "description": "Cancel task button"
+  },
+  "queued": {
+    "message": "Queued",
+    "description": "Queued task state"
+  },
+  "remuxing": {
+    "message": "Remuxing to MP4",
+    "description": "Remux task state"
+  },
+  "fallbackTs": {
+    "message": "Falling back to TS",
+    "description": "TS fallback task state"
+  },
+  "completed": {
+    "message": "Completed",
+    "description": "Completed task state"
+  },
+  "failed": {
+    "message": "Failed",
+    "description": "Failed task state"
+  },
   "footerText": {
     "message": "Like this extension? Give us a Star",
     "description": "Footer text"
@@ -168,5 +212,38 @@
   "github": {
     "message": "Github",
     "description": "Github link text"
+  },
+  "drmSettings": {
+    "message": "DRM settings"
+  },
+  "drmSetupHelp": {
+    "message": "The extension uses its bundled device automatically. Start video playback, select a quality, and click Download. No companion application is needed."
+  },
+  "drmImport": {
+    "message": "Choose another device (optional)"
+  },
+  "drmSave": {
+    "message": "Import device"
+  },
+  "drmRestore": {
+    "message": "Restore bundled device"
+  },
+  "drmBundledReady": {
+    "message": "Bundled device ready"
+  },
+  "drmDeviceReady": {
+    "message": "Custom device ready"
+  },
+  "drmDeviceMissing": {
+    "message": "Bundled device unavailable. Import a valid .wvd v2 file."
+  },
+  "drmChecking": {
+    "message": "Validating and saving device…"
+  },
+  "drmSaved": {
+    "message": "Device saved. Future downloads will use it automatically."
+  },
+  "drmInvalidDevice": {
+    "message": "Import failed. Choose a valid .wvd v2 file whose key matches its certificate."
   }
 }

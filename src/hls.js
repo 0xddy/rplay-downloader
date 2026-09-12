@@ -120,6 +120,20 @@ export function getPlaylistDuration(content) {
   return Number.isFinite(duration) && duration > 0 ? duration : null;
 }
 
+export function getUnsupportedHlsEncryption(content) {
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!/^#EXT-X-(?:SESSION-)?KEY:/.test(line)) continue;
+    const attributes = parseAttributeList(line.slice(line.indexOf(':') + 1));
+    const method = (attributes.METHOD || '').toUpperCase();
+    if (method === 'NONE') continue;
+    if (method !== 'AES-128' || (attributes.KEYFORMAT && attributes.KEYFORMAT !== 'identity')) {
+      return { method: method || 'UNKNOWN', keyFormat: attributes.KEYFORMAT || 'identity' };
+    }
+  }
+  return null;
+}
+
 export function getPrefetchableSegmentUrls(content, playlistUrl) {
   const lines = content.split(/\r?\n/).map((line) => line.trim());
   if (!lines.includes('#EXT-X-ENDLIST')) return [];

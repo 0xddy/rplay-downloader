@@ -8,6 +8,7 @@ describe('download session cancellation', () => {
       controller: new AbortController(),
       prefetcher: { dispose: vi.fn() },
       input: { dispose: vi.fn() },
+      audioInput: { dispose: vi.fn() },
       output: { state: 'started', cancel },
     };
 
@@ -15,6 +16,7 @@ describe('download session cancellation', () => {
     expect(context.controller.signal.aborted).toBe(true);
     expect(context.prefetcher.dispose).toHaveBeenCalledOnce();
     expect(context.input.dispose).toHaveBeenCalledOnce();
+    expect(context.audioInput.dispose).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
   });
 });

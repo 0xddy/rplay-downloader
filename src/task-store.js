@@ -7,6 +7,8 @@ const PRIVATE_TASK_FIELDS = new Set([
   'objectUrl',
   'tempName',
   'sessionKeys',
+  'licenseUrl',
+  'cdmSettings',
 ]);
 
 export function toPublicTask(task) {

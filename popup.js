@@ -17,6 +17,7 @@ function message(key, substitutions, fallback = '') {
 }
 
 function initI18n() {
+  document.getElementById('drmSettings').textContent = message('drmSettings', null, 'DRM 设置');
   document.getElementById('headerTitle').textContent = `📥 ${message('headerTitle', null, 'RPlay Video Downloader')}`;
   document.getElementById('headerSubtitle').textContent = message('headerSubtitle', null, '一键下载 rplay.live 视频');
   document.getElementById('noVideoTitle').textContent = message('noVideoDetected', null, '未检测到视频');
@@ -33,6 +34,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   render();
 
   chrome.runtime.onMessage.addListener((request) => {
+    if (request.type === MessageType.VIDEO_DETECTED && request.tabId === currentTabId) {
+      void loadVideos().then(render);
+      return;
+    }
     if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
     upsertTask(request.task);
 
@@ -224,6 +229,13 @@ function createVideoItem(video, videoIndex, renderedTaskIds) {
   header.append(title, time);
   item.appendChild(header);
 
+  if (video.unavailableReason && video.unavailableReason !== 'dashProtected' && video.streams.length === 0) {
+    const notice = document.createElement('div');
+    notice.className = 'bandwidth';
+    notice.textContent = `${video.sourceType?.toUpperCase() || ''} · ${message(video.unavailableReason)}`;
+    item.appendChild(notice);
+  }
+
   video.streams.forEach((stream) => {
     const sourceId = createSourceId(video.baseUrl, stream.url);
     const shell = document.createElement('div');
@@ -235,7 +247,7 @@ function createVideoItem(video, videoIndex, renderedTaskIds) {
     info.className = 'stream-info';
     const resolution = document.createElement('div');
     resolution.className = 'resolution';
-    resolution.append(document.createTextNode(stream.resolution || `${stream.width}x${stream.height}`));
+    resolution.append(document.createTextNode(stream.resolution || message('originalQuality', null, '原始画质')));
     const qualityBadge = document.createElement('span');
     qualityBadge.className = `quality-badge ${stream.height >= 1080 ? 'quality-fhd' : stream.height >= 720 ? 'quality-hd' : 'quality-sd'}`;
     qualityBadge.textContent = stream.height >= 1080
@@ -243,7 +255,7 @@ function createVideoItem(video, videoIndex, renderedTaskIds) {
       : stream.height >= 720
         ? message('qualityStandard', null, '标清')
         : message('qualityLow', null, '低清');
-    resolution.appendChild(qualityBadge);
+    if (stream.height > 0) resolution.appendChild(qualityBadge);
     const bandwidth = document.createElement('div');
     bandwidth.className = 'bandwidth';
     const bitrate = stream.bandwidth
@@ -254,6 +266,12 @@ function createVideoItem(video, videoIndex, renderedTaskIds) {
       estimatedBytes ? ` · ~${formatSize(estimatedBytes)}` : ''
     }`;
     info.append(resolution, bandwidth);
+    if (stream.unavailableReason && stream.unavailableReason !== 'dashProtected') {
+      const notice = document.createElement('div');
+      notice.className = 'bandwidth';
+      notice.textContent = message(stream.unavailableReason);
+      info.appendChild(notice);
+    }
 
     const button = document.createElement('button');
     button.className = 'download-btn';
@@ -304,11 +322,14 @@ async function startDownload(video, stream, sourceId, button) {
     tabId: currentTabId,
     sourceId,
     data: {
+      sourceType: video.sourceType || 'hls',
+      representationId: stream.representationId || null,
+      audioRepresentationId: stream.audioRepresentationId || null,
       masterUrl: video.baseUrl,
       streamUrl: stream.url,
       audioUrl: stream.audioUrl || null,
       title: liveTitle || currentPageTitle || normalizeVideoTitle(video.title),
-      resolution: stream.resolution,
+      resolution: stream.resolution || message('originalQuality', null, '原始画质'),
       width: stream.width,
       height: stream.height,
       bandwidth: stream.bandwidth,

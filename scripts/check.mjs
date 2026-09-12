@@ -64,7 +64,7 @@ for (const [locale, messages] of locales) {
   }
 }
 
-const i18nSources = await Promise.all(['content.js', 'popup.js'].map((path) => readFile(join(root, path), 'utf8')));
+const i18nSources = await Promise.all(['content.js', 'popup.js', 'src/options.js'].map((path) => readFile(join(root, path), 'utf8')));
 const referencedKeys = new Set();
 for (const source of i18nSources) {
   for (const match of source.matchAll(/(?:message|chrome\.i18n\.getMessage)\(\s*['"]([^'"]+)['"]/g)) {
@@ -75,7 +75,7 @@ for (const match of JSON.stringify(manifest).matchAll(/__MSG_([^_]+)__/g)) refer
 const missingKeys = [...referencedKeys].filter((key) => !defaultMessages[key]).sort();
 if (missingKeys.length > 0) throw new Error(`代码引用了未定义的国际化键：[${missingKeys}]`);
 
-for (const path of ['popup.html', 'offscreen.html']) {
+for (const path of ['popup.html', 'offscreen.html', 'options.html']) {
   const html = await readFile(join(root, path), 'utf8');
   for (const match of html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) {
     if (/^(?:https?:)?\/\//i.test(match[1])) throw new Error(`${path} 不允许加载远程脚本：${match[1]}`);

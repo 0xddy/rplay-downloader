@@ -200,9 +200,10 @@
   `;
     const copy = document.createElement("div");
     const title = document.createElement("strong");
-    title.textContent = chrome.i18n.getMessage("videoDetected") || "\u68C0\u6D4B\u5230\u53EF\u4E0B\u8F7D\u89C6\u9891";
+    title.textContent = chrome.i18n.getMessage("videoDetected") || "\u68C0\u6D4B\u5230\u89C6\u9891\u8D44\u6E90";
     const detail = document.createElement("span");
-    detail.textContent = chrome.i18n.getMessage("streamsFound", [String(videoData.streams.length)]) || `\u627E\u5230 ${videoData.streams.length} \u4E2A\u6E05\u6670\u5EA6\u9009\u9879`;
+    const unavailableReason = videoData.unavailableReason || (videoData.streams.length > 0 && videoData.streams.every((stream) => stream.unavailableReason) ? videoData.streams[0].unavailableReason : null);
+    detail.textContent = unavailableReason && unavailableReason !== "dashProtected" ? chrome.i18n.getMessage(unavailableReason) : chrome.i18n.getMessage("streamsFound", [String(videoData.streams.length)]) || `\u627E\u5230 ${videoData.streams.length} \u4E2A\u6E05\u6670\u5EA6\u9009\u9879`;
     copy.append(title, detail);
     notification.append(icon, copy);
     const openPopup = () => chrome.runtime.sendMessage({ type: MessageType.OPEN_POPUP }).catch(() => {

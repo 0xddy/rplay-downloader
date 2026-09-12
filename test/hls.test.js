@@ -4,6 +4,7 @@ import {
   decryptAes128,
   generateSequenceIv,
   getPrefetchableSegmentUrls,
+  getUnsupportedHlsEncryption,
   looksLikeTransportStream,
   parseAttributeList,
   parseIv,
@@ -14,6 +15,19 @@ import {
 } from '../src/hls.js';
 
 describe('HLS master playlist', () => {
+  it('distinguishes supported AES-128 from sample encryption and DRM key formats', () => {
+    for (const key of ['', '#EXT-X-KEY:METHOD=NONE', '#EXT-X-KEY:METHOD=AES-128,URI="key",KEYFORMAT="identity"']) {
+      expect(getUnsupportedHlsEncryption(`#EXTM3U\n${key}`)).toBeNull();
+    }
+    for (const key of [
+      '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="key"',
+      '#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES-CTR,URI="key"',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key",KEYFORMAT="com.example.drm"',
+    ]) {
+      expect(getUnsupportedHlsEncryption(`#EXTM3U\n${key}\n#EXT-X-KEY:METHOD=NONE`)).not.toBeNull();
+    }
+  });
+
   it('registers both HLS playlists and their common media segment formats', () => {
     expect(HLS_FORMATS).toEqual(expect.arrayContaining([HLS, MPEG_TS, MP4, ADTS, MP3]));
   });

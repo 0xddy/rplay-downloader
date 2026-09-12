@@ -117,10 +117,15 @@ function showVideoNotification(videoData) {
 
   const copy = document.createElement('div');
   const title = document.createElement('strong');
-  title.textContent = chrome.i18n.getMessage('videoDetected') || '检测到可下载视频';
+  title.textContent = chrome.i18n.getMessage('videoDetected') || '检测到视频资源';
   const detail = document.createElement('span');
-  detail.textContent = chrome.i18n.getMessage('streamsFound', [String(videoData.streams.length)])
-    || `找到 ${videoData.streams.length} 个清晰度选项`;
+  const unavailableReason = videoData.unavailableReason
+    || (videoData.streams.length > 0 && videoData.streams.every((stream) => stream.unavailableReason)
+      ? videoData.streams[0].unavailableReason : null);
+  detail.textContent = unavailableReason && unavailableReason !== 'dashProtected'
+    ? chrome.i18n.getMessage(unavailableReason)
+    : chrome.i18n.getMessage('streamsFound', [String(videoData.streams.length)])
+      || `找到 ${videoData.streams.length} 个清晰度选项`;
   copy.append(title, detail);
   notification.append(icon, copy);
 

@@ -153,14 +153,58 @@
       }
     }
   },
-  "downloadMp4Button": { "message": "下载 MP4", "description": "MP4 download button" },
-  "backgroundTasks": { "message": "后台任务", "description": "Background task section" },
-  "cancelButton": { "message": "取消", "description": "Cancel task button" },
-  "queued": { "message": "排队中", "description": "Queued task state" },
-  "remuxing": { "message": "无转码封装 MP4", "description": "Remux task state" },
-  "fallbackTs": { "message": "回退下载 TS", "description": "TS fallback task state" },
-  "completed": { "message": "已完成", "description": "Completed task state" },
-  "failed": { "message": "失败", "description": "Failed task state" },
+  "drmUnsupported": {
+    "message": "已识别到 DRM / SAMPLE-AES 受保护媒体，当前扩展不支持下载。",
+    "description": "Protected source status"
+  },
+  "dashUnsupported": {
+    "message": "已捕获 DASH 清单，但未能取得视频画质信息。请刷新页面后重试。",
+    "description": "DASH source status"
+  },
+  "dashLayoutUnsupported": {
+    "message": "此 DASH 布局暂不支持。当前支持单时段点播、完整 MP4/CMAF 音视频轨。",
+    "description": "Unsupported DASH addressing or timeline"
+  },
+  "originalQuality": {
+    "message": "原始画质",
+    "description": "Quality label when resolution is not declared"
+  },
+  "cmafNeedsPlaylist": {
+    "message": "已识别到 CMAF 视频轨。它可由 DASH 或 HLS 清单引用；仅凭此轨道无法确定完整音视频及下载支持。",
+    "description": "CMAF track without a supported manifest"
+  },
+  "downloadMp4Button": {
+    "message": "下载 MP4",
+    "description": "MP4 download button"
+  },
+  "backgroundTasks": {
+    "message": "后台任务",
+    "description": "Background task section"
+  },
+  "cancelButton": {
+    "message": "取消",
+    "description": "Cancel task button"
+  },
+  "queued": {
+    "message": "排队中",
+    "description": "Queued task state"
+  },
+  "remuxing": {
+    "message": "无转码封装 MP4",
+    "description": "Remux task state"
+  },
+  "fallbackTs": {
+    "message": "回退下载 TS",
+    "description": "TS fallback task state"
+  },
+  "completed": {
+    "message": "已完成",
+    "description": "Completed task state"
+  },
+  "failed": {
+    "message": "失败",
+    "description": "Failed task state"
+  },
   "footerText": {
     "message": "喜欢本插件请给个 Star 吧",
     "description": "Footer text"
@@ -168,5 +212,38 @@
   "github": {
     "message": "Github",
     "description": "Github link text"
+  },
+  "drmSettings": {
+    "message": "DRM 设置"
+  },
+  "drmSetupHelp": {
+    "message": "插件自动使用内置设备完成授权，无需启动其他程序。开始播放视频后，选择画质并点击下载。"
+  },
+  "drmImport": {
+    "message": "更换设备（可选）"
+  },
+  "drmSave": {
+    "message": "导入设备"
+  },
+  "drmRestore": {
+    "message": "恢复内置设备"
+  },
+  "drmBundledReady": {
+    "message": "内置设备已就绪"
+  },
+  "drmDeviceReady": {
+    "message": "自定义设备已就绪"
+  },
+  "drmDeviceMissing": {
+    "message": "内置设备不可用，请选择有效的 .wvd v2 文件并导入。"
+  },
+  "drmChecking": {
+    "message": "正在校验并保存设备…"
+  },
+  "drmSaved": {
+    "message": "设备已保存，后续下载将自动使用它。"
+  },
+  "drmInvalidDevice": {
+    "message": "导入失败，请选择有效且私钥与证书匹配的 .wvd v2 文件。"
   }
 }

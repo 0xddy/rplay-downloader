@@ -1,7 +1,9 @@
 export function abortDownloadContext(context) {
   context.controller.abort();
+  context.resolveMediaKey?.dispose?.();
   context.prefetcher?.dispose();
   context.input?.dispose();
+  context.audioInput?.dispose();
   if (context.output && !['canceled', 'finalized'].includes(context.output.state)) {
     try {
       // Do not await MediaBunny cleanup here. The request must acknowledge the

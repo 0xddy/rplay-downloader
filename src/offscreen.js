@@ -14,6 +14,7 @@ import {
 } from './protocol.js';
 import { ProgressReporter } from './progress.js';
 import { downloadFallbackTs } from './ts-fallback.js';
+import { createCdmKeyResolver } from './cdm-client.js';
 
 let activeContext = null;
 const readyFiles = new Map();
@@ -51,6 +52,7 @@ async function executeTask(task) {
     taskId: task.taskId,
     controller: new AbortController(),
     input: null,
+    audioInput: null,
     output: null,
     prefetcher: null,
     fileReady: null,
@@ -58,9 +60,10 @@ async function executeTask(task) {
   context.done = new Promise((resolve) => {
     context.resolveDone = resolve;
   });
+  context.resolveMediaKey = createCdmKeyResolver(task, context);
   activeContext = context;
   const reporter = new ProgressReporter(task);
-  reporter.setPhase(TaskPhase.PREPARING, '正在分析 HLS 轨道…');
+  reporter.setPhase(TaskPhase.PREPARING, task.sourceType === 'dash' ? '正在分析 DASH 音视频轨道…' : '正在分析 HLS 轨道…');
 
   try {
     let temp;
@@ -70,7 +73,7 @@ async function executeTask(task) {
       temp = await remuxToMp4(task, reporter, context);
     } catch (error) {
       if (isAbortError(error) || context.controller.signal.aborted) throw new TaskCanceledError();
-      if (!shouldFallbackToTs(error)) throw error;
+      if (task.sourceType === 'dash' || !shouldFallbackToTs(error)) throw error;
       fallbackReason = error?.message || 'MP4 换封装不兼容';
       actualFormat = 'ts';
       try {
@@ -101,6 +104,7 @@ async function executeTask(task) {
       }).catch(() => {});
     }
   } finally {
+    context.resolveMediaKey.dispose();
     context.resolveDone();
   }
 }
