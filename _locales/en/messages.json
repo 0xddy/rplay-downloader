@@ -217,25 +217,25 @@
     "message": "DRM settings"
   },
   "drmSetupHelp": {
-    "message": "The extension uses its bundled device automatically. Start video playback, select a quality, and click Download. No companion application is needed."
+    "message": "Manage authorization for encrypted downloads. A device is already included, so you usually don’t need to import a file."
   },
   "drmImport": {
-    "message": "Choose another device (optional)"
+    "message": "Custom device"
   },
   "drmSave": {
-    "message": "Import device"
+    "message": "Import and use"
   },
   "drmRestore": {
     "message": "Restore bundled device"
   },
   "drmBundledReady": {
-    "message": "Bundled device ready"
+    "message": "Using the included device"
   },
   "drmDeviceReady": {
-    "message": "Custom device ready"
+    "message": "Using a custom device"
   },
   "drmDeviceMissing": {
-    "message": "Bundled device unavailable. Import a valid .wvd v2 file."
+    "message": "Try restoring the included device, or import a valid .wvd v2 file."
   },
   "drmChecking": {
     "message": "Validating and saving device…"
@@ -244,6 +244,96 @@
     "message": "Device saved. Future downloads will use it automatically."
   },
   "drmInvalidDevice": {
-    "message": "Import failed. Choose a valid .wvd v2 file whose key matches its certificate."
+    "message": "Import failed. Your current device is unchanged. Check that this is a valid .wvd v2 file under 256 KB and that browser storage is available."
+  },
+  "drmCurrentDevice": {
+    "message": "CURRENT DEVICE"
+  },
+  "drmLoading": {
+    "message": "Loading your device…"
+  },
+  "drmMissingTitle": {
+    "message": "Could not load a device"
+  },
+  "drmBundledHint": {
+    "message": "No file import needed. Return to a video page to start a download."
+  },
+  "drmCustomHint": {
+    "message": "Future downloads will use this device. You can restore the included one at any time."
+  },
+  "drmDownloadSteps": {
+    "message": "Download steps"
+  },
+  "drmStepPlay": {
+    "message": "Open and play a video"
+  },
+  "drmStepQuality": {
+    "message": "Open the extension; pick a quality"
+  },
+  "drmStepDownload": {
+    "message": "Click Download to save"
+  },
+  "drmOptional": {
+    "message": "Optional"
+  },
+  "drmCustomHelp": {
+    "message": "Import a file here if you have your own device credentials or need to replace the current device."
+  },
+  "drmChooseFile": {
+    "message": "Choose a device file"
+  },
+  "drmFileRequirements": {
+    "message": ".wvd format · Version 2 · Up to 256 KB"
+  },
+  "drmLocalNote": {
+    "message": "Imported locally. The file itself is not uploaded to a server."
+  },
+  "drmFileHelpTitle": {
+    "message": "What is a device file?"
+  },
+  "drmFileExplanation": {
+    "message": "A .wvd file holds Widevine device credentials: a device certificate and private key. The extension uses them to request a playback license from the video platform and process encrypted video."
+  },
+  "drmFileExample": {
+    "message": "Example filename"
+  },
+  "drmNotVideo": {
+    "message": "Choose a device file ending in .wvd. A video, an .mpd / .m3u8 URL, or a browser installer cannot be used here."
+  },
+  "drmNoFileTitle": {
+    "message": "Don’t have this file?"
+  },
+  "drmNoFileHelp": {
+    "message": "Keep using the included device. There is no need to find or import another file."
+  },
+  "drmFaqTitle": {
+    "message": "Good to know"
+  },
+  "drmFaqReplaceTitle": {
+    "message": "When should I change the device?"
+  },
+  "drmFaqReplaceHelp": {
+    "message": "If the platform explicitly rejects the current device and your platform administrator or device provider supplies a compatible .wvd v2 file, you can try replacing it. Normal downloads do not require this step. A failed import leaves the current device in place."
+  },
+  "drmFaqFailureTitle": {
+    "message": "Why can a download fail even with a device loaded?"
+  },
+  "drmFaqFailureHelp": {
+    "message": "A loaded device means its file is usable; it does not authorize every video. Your account still needs viewing access, and the platform’s license service must accept the device. Refresh the video page and play it again before retrying the download."
+  },
+  "drmFaqPrivacyTitle": {
+    "message": "Where are imported credentials stored?"
+  },
+  "drmFaqPrivacyHelp": {
+    "message": "Device credentials stay in this browser’s local extension storage and are reused when you reopen the extension. The original file is not uploaded. During downloads, the extension uses these credentials to request authorization from the platform’s license service. You can restore the included device at any time."
+  },
+  "drmRestoring": {
+    "message": "Restoring the included device…"
+  },
+  "drmRestored": {
+    "message": "Included device restored. Future downloads will use it automatically."
+  },
+  "drmRestoreFailed": {
+    "message": "Could not restore the included device. Your current device is unchanged. Reload the extension and try again."
   }
 }

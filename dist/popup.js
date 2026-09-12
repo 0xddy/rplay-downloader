@@ -117,8 +117,10 @@ ${streamUrl || ""}`;
     return chrome.i18n.getMessage(key, substitutions) || fallback;
   }
   function initI18n() {
-    document.getElementById("drmSettings").textContent = message("drmSettings", null, "DRM \u8BBE\u7F6E");
-    document.getElementById("headerTitle").textContent = `\u{1F4E5} ${message("headerTitle", null, "RPlay Video Downloader")}`;
+    const settingsLink = document.getElementById("drmSettings");
+    settingsLink.title = message("drmSettings", null, "DRM \u8BBE\u7F6E");
+    settingsLink.setAttribute("aria-label", settingsLink.title);
+    document.getElementById("headerTitle").textContent = message("headerTitle", null, "RPlay Video Downloader");
     document.getElementById("headerSubtitle").textContent = message("headerSubtitle", null, "\u4E00\u952E\u4E0B\u8F7D rplay.live \u89C6\u9891");
     document.getElementById("noVideoTitle").textContent = message("noVideoDetected", null, "\u672A\u68C0\u6D4B\u5230\u89C6\u9891");
     document.getElementById("noVideoDesc").textContent = message("noVideoDescription", null, "\u8BF7\u6253\u5F00 RPlay \u89C6\u9891\u64AD\u653E\u9875\u9762");

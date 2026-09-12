@@ -217,25 +217,25 @@
     "message": "DRM 设置"
   },
   "drmSetupHelp": {
-    "message": "插件自动使用内置设备完成授权，无需启动其他程序。开始播放视频后，选择画质并点击下载。"
+    "message": "用于加密视频的下载授权。插件已提供内置设备，通常无需导入任何文件。"
   },
   "drmImport": {
-    "message": "更换设备（可选）"
+    "message": "自定义设备"
   },
   "drmSave": {
-    "message": "导入设备"
+    "message": "导入并使用"
   },
   "drmRestore": {
     "message": "恢复内置设备"
   },
   "drmBundledReady": {
-    "message": "内置设备已就绪"
+    "message": "正在使用内置设备"
   },
   "drmDeviceReady": {
-    "message": "自定义设备已就绪"
+    "message": "正在使用自定义设备"
   },
   "drmDeviceMissing": {
-    "message": "内置设备不可用，请选择有效的 .wvd v2 文件并导入。"
+    "message": "请尝试恢复内置设备，或导入有效的 .wvd v2 文件。"
   },
   "drmChecking": {
     "message": "正在校验并保存设备…"
@@ -244,6 +244,96 @@
     "message": "设备已保存，后续下载将自动使用它。"
   },
   "drmInvalidDevice": {
-    "message": "导入失败，请选择有效且私钥与证书匹配的 .wvd v2 文件。"
+    "message": "未能导入设备，当前设备未更换。请确认文件为有效的 .wvd v2、大小不超过 256 KB，且浏览器本地存储可用。"
+  },
+  "drmCurrentDevice": {
+    "message": "当前设备"
+  },
+  "drmLoading": {
+    "message": "正在读取设备…"
+  },
+  "drmMissingTitle": {
+    "message": "未能加载设备"
+  },
+  "drmBundledHint": {
+    "message": "无需导入文件，回到视频页即可开始下载。"
+  },
+  "drmCustomHint": {
+    "message": "后续下载会自动使用此设备；需要时可恢复内置设备。"
+  },
+  "drmDownloadSteps": {
+    "message": "下载步骤"
+  },
+  "drmStepPlay": {
+    "message": "打开视频页并播放"
+  },
+  "drmStepQuality": {
+    "message": "打开插件，选择画质"
+  },
+  "drmStepDownload": {
+    "message": "点击下载，保存视频"
+  },
+  "drmOptional": {
+    "message": "可选"
+  },
+  "drmCustomHelp": {
+    "message": "已有自己的设备文件，或需要替换当前设备时，可以在这里导入。"
+  },
+  "drmChooseFile": {
+    "message": "选择设备文件"
+  },
+  "drmFileRequirements": {
+    "message": ".wvd 格式 · 版本 2 · 最大 256 KB"
+  },
+  "drmLocalNote": {
+    "message": "文件仅在本地导入，不会作为文件上传到服务器。"
+  },
+  "drmFileHelpTitle": {
+    "message": "要选择的是什么文件？"
+  },
+  "drmFileExplanation": {
+    "message": ".wvd 是 Widevine 设备凭据文件，包含用于授权的设备证书和私钥。插件用它向视频平台申请播放许可证，以处理加密视频。"
+  },
+  "drmFileExample": {
+    "message": "文件名示例"
+  },
+  "drmNotVideo": {
+    "message": "请选择后缀为 .wvd 的设备文件，不是视频、.mpd / .m3u8 地址，也不是浏览器安装文件。"
+  },
+  "drmNoFileTitle": {
+    "message": "手头没有这个文件？"
+  },
+  "drmNoFileHelp": {
+    "message": "保持使用内置设备即可，无需额外寻找或导入文件。"
+  },
+  "drmFaqTitle": {
+    "message": "你可能还想了解"
+  },
+  "drmFaqReplaceTitle": {
+    "message": "什么时候需要更换设备？"
+  },
+  "drmFaqReplaceHelp": {
+    "message": "当平台明确提示当前设备授权被拒绝，且你有平台管理员或设备管理方提供的兼容 .wvd v2 文件时，可以尝试更换。普通下载不需要这一步；导入失败也不会替换当前设备。"
+  },
+  "drmFaqFailureTitle": {
+    "message": "设备已加载，为什么下载仍可能失败？"
+  },
+  "drmFaqFailureHelp": {
+    "message": "设备已加载表示文件可以使用，不代表每个视频都已获授权。下载还需要当前账号具备观看权限，且平台许可证服务接受该设备。请先刷新视频页并重新播放，再尝试下载。"
+  },
+  "drmFaqPrivacyTitle": {
+    "message": "导入后文件保存在什么地方？"
+  },
+  "drmFaqPrivacyHelp": {
+    "message": "设备凭据保存在当前浏览器的扩展本地存储中，重新打开插件后仍会使用。原始文件不会上传；下载时，插件会使用这些凭据向平台许可证服务发起授权请求。你可以随时恢复内置设备。"
+  },
+  "drmRestoring": {
+    "message": "正在恢复内置设备…"
+  },
+  "drmRestored": {
+    "message": "已恢复内置设备，后续下载将自动使用它。"
+  },
+  "drmRestoreFailed": {
+    "message": "未能恢复内置设备，当前设备未更换。请重新加载扩展后再试。"
   }
 }

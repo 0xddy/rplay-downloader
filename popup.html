@@ -22,7 +22,11 @@
     .header {
       background: linear-gradient(135deg, #0099ff 0%, #0066cc 50%, #004c99 100%);
       padding: 24px 20px;
-      text-align: center;
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) 36px;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
       box-shadow: 0 8px 24px rgba(0, 153, 255, 0.3);
       position: relative;
       overflow: hidden;
@@ -83,23 +87,56 @@
     }
 
     .header h1 {
-      font-size: 20px;
+      font-size: 18px;
       color: white;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
+      line-height: 24px;
       font-weight: 700;
       position: relative;
       z-index: 1;
       text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      letter-spacing: 0.5px;
+      letter-spacing: 0.1px;
     }
 
     .header p {
       font-size: 12px;
+      line-height: 18px;
       color: rgba(255, 255, 255, 0.95);
       position: relative;
       z-index: 1;
       text-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
     }
+
+    .header-icon {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 13px;
+      background: rgba(255, 255, 255, 0.16);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    }
+    .header-copy { min-width: 0; }
+    .header::before, .header::after, .tech-lines { pointer-events: none; }
+    .settings-link {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.12);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .settings-link:hover { background: rgba(255, 255, 255, 0.25); border-color: rgba(255, 255, 255, 0.7); }
+    .settings-link:focus-visible { outline: 2px solid white; outline-offset: 3px; }
 
     .container { padding: 20px; }
 
@@ -410,8 +447,21 @@
       <div class="tech-line"></div>
       <div class="tech-line"></div>
     </div>
-    <h1 id="headerTitle">📥 RPlay Video Downloader</h1>
-    <p id="headerSubtitle">一键下载 rplay.live 视频</p>
+    <span class="header-icon" aria-hidden="true">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v11m-4-4 4 4 4-4M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/>
+      </svg>
+    </span>
+    <div class="header-copy">
+      <h1 id="headerTitle">RPlay Video Downloader</h1>
+      <p id="headerSubtitle">一键下载 rplay.live 视频</p>
+    </div>
+    <a id="drmSettings" class="settings-link" href="options.html" target="_blank" rel="noopener" title="DRM 设置" aria-label="DRM 设置">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m9.6 3-.5 2.1-1.6.9-2.1-.6L3 9.6l1.6 1.5v1.8L3 14.4l2.4 4.2 2.1-.6 1.6.9.5 2.1h4.8l.5-2.1 1.6-.9 2.1.6 2.4-4.2-1.6-1.5v-1.8L21 9.6l-2.4-4.2-2.1.6-1.6-.9-.5-2.1z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </a>
   </div>
 
   <div class="container">
@@ -428,7 +478,6 @@
     <div id="statusMessage" class="status-message" role="status"></div>
 
     <div class="footer">
-      <a id="drmSettings" class="github-link" href="options.html" target="_blank">DRM 设置</a>
       <span id="footerText" class="footer-text">喜欢本插件请给个 Star 吧</span>
       <a class="github-link" href="https://github.com/0xddy/rplay-downloader" target="_blank" rel="noreferrer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

@@ -17,8 +17,10 @@ function message(key, substitutions, fallback = '') {
 }
 
 function initI18n() {
-  document.getElementById('drmSettings').textContent = message('drmSettings', null, 'DRM 设置');
-  document.getElementById('headerTitle').textContent = `📥 ${message('headerTitle', null, 'RPlay Video Downloader')}`;
+  const settingsLink = document.getElementById('drmSettings');
+  settingsLink.title = message('drmSettings', null, 'DRM 设置');
+  settingsLink.setAttribute('aria-label', settingsLink.title);
+  document.getElementById('headerTitle').textContent = message('headerTitle', null, 'RPlay Video Downloader');
   document.getElementById('headerSubtitle').textContent = message('headerSubtitle', null, '一键下载 rplay.live 视频');
   document.getElementById('noVideoTitle').textContent = message('noVideoDetected', null, '未检测到视频');
   document.getElementById('noVideoDesc').textContent = message('noVideoDescription', null, '请打开 RPlay 视频播放页面');

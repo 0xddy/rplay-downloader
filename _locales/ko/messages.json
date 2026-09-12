@@ -217,25 +217,25 @@
     "message": "DRM 설정"
   },
   "drmSetupHelp": {
-    "message": "내장 장치로 자동 인증합니다. 동영상을 재생하고 화질을 선택한 후 다운로드하세요. 별도 프로그램이 필요하지 않습니다."
+    "message": "암호화된 동영상의 다운로드 인증을 관리합니다. 기기가 기본 제공되므로 보통 파일을 가져올 필요가 없습니다."
   },
   "drmImport": {
-    "message": "다른 장치 선택 (선택 사항)"
+    "message": "사용자 지정 기기"
   },
   "drmSave": {
-    "message": "장치 가져오기"
+    "message": "가져와서 사용"
   },
   "drmRestore": {
     "message": "내장 장치로 복원"
   },
   "drmBundledReady": {
-    "message": "내장 장치 준비됨"
+    "message": "기본 제공 기기 사용 중"
   },
   "drmDeviceReady": {
-    "message": "사용자 지정 장치 준비됨"
+    "message": "사용자 지정 기기 사용 중"
   },
   "drmDeviceMissing": {
-    "message": "내장 장치를 사용할 수 없습니다. 유효한 .wvd v2 파일을 가져오세요."
+    "message": "기본 제공 기기를 복원하거나 유효한 .wvd v2 파일을 가져오세요."
   },
   "drmChecking": {
     "message": "장치 확인 및 저장 중…"
@@ -244,6 +244,96 @@
     "message": "저장되었습니다. 이후 다운로드에 자동으로 사용됩니다."
   },
   "drmInvalidDevice": {
-    "message": "가져오기에 실패했습니다. 키와 인증서가 일치하는 유효한 .wvd v2 파일을 선택하세요."
+    "message": "가져오지 못했습니다. 현재 기기는 유지됩니다. 256 KB 이하의 유효한 .wvd v2 파일인지, 브라우저 로컬 저장소를 사용할 수 있는지 확인하세요."
+  },
+  "drmCurrentDevice": {
+    "message": "현재 기기"
+  },
+  "drmLoading": {
+    "message": "기기를 불러오는 중…"
+  },
+  "drmMissingTitle": {
+    "message": "기기를 불러오지 못했습니다"
+  },
+  "drmBundledHint": {
+    "message": "파일을 가져올 필요가 없습니다. 동영상 페이지로 돌아가 다운로드를 시작하세요."
+  },
+  "drmCustomHint": {
+    "message": "이후 다운로드에 이 기기를 사용합니다. 언제든 기본 제공 기기로 복원할 수 있습니다."
+  },
+  "drmDownloadSteps": {
+    "message": "다운로드 순서"
+  },
+  "drmStepPlay": {
+    "message": "동영상 페이지에서 재생"
+  },
+  "drmStepQuality": {
+    "message": "확장 프로그램에서 화질 선택"
+  },
+  "drmStepDownload": {
+    "message": "다운로드를 눌러 저장"
+  },
+  "drmOptional": {
+    "message": "선택 사항"
+  },
+  "drmCustomHelp": {
+    "message": "본인의 기기 파일이 있거나 현재 기기를 교체해야 할 때 여기에서 가져오세요."
+  },
+  "drmChooseFile": {
+    "message": "기기 파일 선택"
+  },
+  "drmFileRequirements": {
+    "message": ".wvd 형식 · 버전 2 · 최대 256 KB"
+  },
+  "drmLocalNote": {
+    "message": "로컬에서만 가져옵니다. 파일 자체는 서버에 업로드되지 않습니다."
+  },
+  "drmFileHelpTitle": {
+    "message": "어떤 파일을 선택하나요?"
+  },
+  "drmFileExplanation": {
+    "message": ".wvd는 인증에 쓰이는 기기 인증서와 개인 키가 담긴 Widevine 기기 자격 증명 파일입니다. 확장 프로그램은 이를 사용해 동영상 플랫폼에 재생 라이선스를 요청하고 암호화된 동영상을 처리합니다."
+  },
+  "drmFileExample": {
+    "message": "파일 이름 예시"
+  },
+  "drmNotVideo": {
+    "message": ".wvd로 끝나는 기기 파일을 선택하세요. 동영상, .mpd / .m3u8 주소, 브라우저 설치 파일은 사용할 수 없습니다."
+  },
+  "drmNoFileTitle": {
+    "message": "이 파일이 없나요?"
+  },
+  "drmNoFileHelp": {
+    "message": "기본 제공 기기를 그대로 사용하세요. 별도로 파일을 찾거나 가져올 필요가 없습니다."
+  },
+  "drmFaqTitle": {
+    "message": "알아두면 좋은 내용"
+  },
+  "drmFaqReplaceTitle": {
+    "message": "언제 기기를 교체해야 하나요?"
+  },
+  "drmFaqReplaceHelp": {
+    "message": "플랫폼이 현재 기기의 인증을 명시적으로 거부하고 플랫폼 관리자나 기기 제공자가 호환되는 .wvd v2 파일을 제공한 경우 교체를 시도할 수 있습니다. 일반적인 다운로드에는 필요하지 않습니다. 가져오기에 실패해도 현재 기기는 유지됩니다."
+  },
+  "drmFaqFailureTitle": {
+    "message": "기기를 불러왔는데도 다운로드가 실패하는 이유는?"
+  },
+  "drmFaqFailureHelp": {
+    "message": "기기 로드는 파일을 사용할 수 있다는 뜻이며 모든 동영상이 인증되었다는 뜻은 아닙니다. 현재 계정에 시청 권한이 있어야 하고 플랫폼의 라이선스 서비스가 기기를 허용해야 합니다. 동영상 페이지를 새로고침하고 다시 재생한 뒤 다운로드를 재시도하세요."
+  },
+  "drmFaqPrivacyTitle": {
+    "message": "가져온 정보는 어디에 저장되나요?"
+  },
+  "drmFaqPrivacyHelp": {
+    "message": "기기 자격 증명은 현재 브라우저의 확장 프로그램 로컬 저장소에 보관되며 다시 열어도 사용됩니다. 원본 파일은 업로드되지 않습니다. 다운로드 시 이 정보를 사용해 플랫폼의 라이선스 서비스에 인증을 요청합니다. 언제든 기본 제공 기기로 복원할 수 있습니다."
+  },
+  "drmRestoring": {
+    "message": "기본 제공 기기 복원 중…"
+  },
+  "drmRestored": {
+    "message": "기본 제공 기기를 복원했습니다. 이후 다운로드에 자동으로 사용됩니다."
+  },
+  "drmRestoreFailed": {
+    "message": "기본 제공 기기를 복원하지 못했습니다. 현재 기기는 유지됩니다. 확장 프로그램을 다시 로드한 후 재시도하세요."
   }
 }

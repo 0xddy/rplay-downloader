@@ -64,12 +64,13 @@ for (const [locale, messages] of locales) {
   }
 }
 
-const i18nSources = await Promise.all(['content.js', 'popup.js', 'src/options.js'].map((path) => readFile(join(root, path), 'utf8')));
+const i18nSources = await Promise.all(['content.js', 'popup.js', 'src/options.js', 'options.html'].map((path) => readFile(join(root, path), 'utf8')));
 const referencedKeys = new Set();
 for (const source of i18nSources) {
   for (const match of source.matchAll(/(?:message|chrome\.i18n\.getMessage)\(\s*['"]([^'"]+)['"]/g)) {
     referencedKeys.add(match[1]);
   }
+  for (const match of source.matchAll(/data-i18n(?:-aria)?=["']([^"']+)["']/g)) referencedKeys.add(match[1]);
 }
 for (const match of JSON.stringify(manifest).matchAll(/__MSG_([^_]+)__/g)) referencedKeys.add(match[1]);
 const missingKeys = [...referencedKeys].filter((key) => !defaultMessages[key]).sort();

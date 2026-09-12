@@ -217,25 +217,25 @@
     "message": "DRM 設定"
   },
   "drmSetupHelp": {
-    "message": "内蔵デバイスで自動的に認証します。動画を再生し、画質を選んでダウンロードしてください。別のプログラムは不要です。"
+    "message": "暗号化された動画のダウンロード認証を設定します。デバイスは同梱されているため、通常はファイルのインポートは不要です。"
   },
   "drmImport": {
-    "message": "別のデバイスを選択（任意）"
+    "message": "カスタムデバイス"
   },
   "drmSave": {
-    "message": "デバイスを読み込む"
+    "message": "インポートして使用"
   },
   "drmRestore": {
     "message": "内蔵デバイスに戻す"
   },
   "drmBundledReady": {
-    "message": "内蔵デバイスを使用中"
+    "message": "同梱デバイスを使用中"
   },
   "drmDeviceReady": {
     "message": "カスタムデバイスを使用中"
   },
   "drmDeviceMissing": {
-    "message": "内蔵デバイスを使用できません。有効な .wvd v2 ファイルを読み込んでください。"
+    "message": "同梱デバイスを復元するか、有効な .wvd v2 ファイルをインポートしてください。"
   },
   "drmChecking": {
     "message": "デバイスを検証して保存中…"
@@ -244,6 +244,96 @@
     "message": "保存しました。次回のダウンロードから自動的に使用します。"
   },
   "drmInvalidDevice": {
-    "message": "読み込みに失敗しました。秘密鍵と証明書が一致する有効な .wvd v2 ファイルを選んでください。"
+    "message": "インポートできませんでした。現在のデバイスは変更されていません。256 KB 以下の有効な .wvd v2 ファイルであることと、ブラウザの保存領域が利用可能であることを確認してください。"
+  },
+  "drmCurrentDevice": {
+    "message": "現在のデバイス"
+  },
+  "drmLoading": {
+    "message": "デバイスを読み込み中…"
+  },
+  "drmMissingTitle": {
+    "message": "デバイスを読み込めませんでした"
+  },
+  "drmBundledHint": {
+    "message": "ファイルのインポートは不要です。動画ページに戻ってダウンロードを開始できます。"
+  },
+  "drmCustomHint": {
+    "message": "今後のダウンロードでこのデバイスを使用します。同梱デバイスにはいつでも戻せます。"
+  },
+  "drmDownloadSteps": {
+    "message": "ダウンロード手順"
+  },
+  "drmStepPlay": {
+    "message": "動画ページで再生"
+  },
+  "drmStepQuality": {
+    "message": "拡張機能で画質を選択"
+  },
+  "drmStepDownload": {
+    "message": "ダウンロードして保存"
+  },
+  "drmOptional": {
+    "message": "任意"
+  },
+  "drmCustomHelp": {
+    "message": "独自のデバイスファイルがある場合や、現在のデバイスを変更する必要がある場合にインポートします。"
+  },
+  "drmChooseFile": {
+    "message": "デバイスファイルを選択"
+  },
+  "drmFileRequirements": {
+    "message": ".wvd 形式 · バージョン 2 · 最大 256 KB"
+  },
+  "drmLocalNote": {
+    "message": "ローカルにインポートします。ファイル自体がサーバーにアップロードされることはありません。"
+  },
+  "drmFileHelpTitle": {
+    "message": "どのファイルを選ぶの？"
+  },
+  "drmFileExplanation": {
+    "message": ".wvd は、認証に使うデバイス証明書と秘密鍵を含む Widevine のデバイス認証情報ファイルです。拡張機能はこれを使って動画プラットフォームに再生ライセンスを申請し、暗号化された動画を処理します。"
+  },
+  "drmFileExample": {
+    "message": "ファイル名の例"
+  },
+  "drmNotVideo": {
+    "message": "拡張子が .wvd のデバイスファイルを選んでください。動画、.mpd / .m3u8 の URL、ブラウザのインストーラーは使用できません。"
+  },
+  "drmNoFileTitle": {
+    "message": "ファイルをお持ちでない場合"
+  },
+  "drmNoFileHelp": {
+    "message": "同梱デバイスをそのままお使いください。別のファイルを探したりインポートしたりする必要はありません。"
+  },
+  "drmFaqTitle": {
+    "message": "よくある質問"
+  },
+  "drmFaqReplaceTitle": {
+    "message": "デバイスの変更が必要なのはいつ？"
+  },
+  "drmFaqReplaceHelp": {
+    "message": "プラットフォームが現在のデバイスの認証を明示的に拒否し、管理者やデバイス提供元から互換性のある .wvd v2 ファイルが提供された場合は、変更を試せます。通常のダウンロードでは不要です。インポートに失敗しても現在のデバイスは変わりません。"
+  },
+  "drmFaqFailureTitle": {
+    "message": "デバイスが読み込まれてもダウンロードできないのは？"
+  },
+  "drmFaqFailureHelp": {
+    "message": "読み込み済みの表示はファイルが使用可能という意味で、すべての動画が認証済みとは限りません。アカウントに視聴権限があり、プラットフォームのライセンスサービスがデバイスを受け入れる必要があります。動画ページを更新して再生し直してから、再度お試しください。"
+  },
+  "drmFaqPrivacyTitle": {
+    "message": "インポートした情報はどこに保存される？"
+  },
+  "drmFaqPrivacyHelp": {
+    "message": "認証情報は現在のブラウザの拡張機能用ローカル保存領域に保存され、次回以降も使われます。元のファイルはアップロードされません。ダウンロード時にはこの情報を使ってプラットフォームのライセンスサービスへ認証を申請します。同梱デバイスにはいつでも戻せます。"
+  },
+  "drmRestoring": {
+    "message": "同梱デバイスを復元中…"
+  },
+  "drmRestored": {
+    "message": "同梱デバイスを復元しました。今後のダウンロードで自動的に使用します。"
+  },
+  "drmRestoreFailed": {
+    "message": "同梱デバイスを復元できませんでした。現在のデバイスは変更されていません。拡張機能を再読み込みしてお試しください。"
   }
 }
