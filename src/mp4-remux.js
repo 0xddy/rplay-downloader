@@ -83,10 +83,11 @@ async function pipeTracks(tracks, baseTimestamp, duration, reporter, context) {
   while (states.some((state) => !state.next.done)) {
     if (context.controller.signal.aborted) throw new TaskCanceledError();
     const available = states.filter((state) => !state.next.done);
-    available.sort((left, right) => left.next.value.timestamp - right.next.value.timestamp);
+    available.sort((left, right) => (left.next.value.timestamp + (left.timestampOffset || 0))
+      - (right.next.value.timestamp + (right.timestampOffset || 0)));
     const state = available[0];
     const packet = state.next.value;
-    const normalized = packet.clone({ timestamp: packet.timestamp - baseTimestamp });
+    const normalized = packet.clone({ timestamp: packet.timestamp + (state.timestampOffset || 0) - baseTimestamp });
     await state.source.add(normalized, { decoderConfig: state.decoderConfig });
     reporter.notePacket(normalized.timestamp + normalized.duration, duration);
     state.next = await state.iterator.next();
@@ -104,6 +105,8 @@ export async function remuxToMp4(task, reporter, context) {
   let input = null;
   let audioInput = null;
   let sourceDuration = task.duration || null;
+  let videoTimestampOffset = 0;
+  let audioTimestampOffset = 0;
 
   try {
     if (task.sourceType === 'dash') {
@@ -111,6 +114,8 @@ export async function remuxToMp4(task, reporter, context) {
       input = dash.input;
       audioInput = dash.audioInput;
       sourceDuration = dash.duration || sourceDuration;
+      videoTimestampOffset = dash.videoTimestampOffset || 0;
+      audioTimestampOffset = dash.audioTimestampOffset || 0;
     } else {
       prefetcher = new HlsSegmentPrefetcher(trackedFetch, {
         concurrency: FETCH_PARALLELISM,
@@ -140,6 +145,10 @@ export async function remuxToMp4(task, reporter, context) {
       const audioTracks = await audioInput.getAudioTracks();
       if (audioTracks.length !== 1) throw new SourceError('所选 DASH 音轨未包含唯一音频轨道', 'INVALID_AUDIO_TRACK');
       [audioTrack] = audioTracks;
+    } else {
+      // Embedded audio is read from the same segmented input as video, so
+      // both tracks must restore that input's shared timestamp offset.
+      audioTimestampOffset = videoTimestampOffset;
     }
     if (await videoTrack.isLive()) {
       throw new SourceError('当前版本只支持 VOD/回放，不支持持续直播录制', 'LIVE_UNSUPPORTED');
@@ -171,8 +180,8 @@ export async function remuxToMp4(task, reporter, context) {
       throw new RemuxCompatibilityError('无法获取音频轨道初始化参数');
     }
 
-    const firstTimestamps = [videoFirst.timestamp];
-    if (audioFirst) firstTimestamps.push(audioFirst.timestamp);
+    const firstTimestamps = [videoFirst.timestamp + videoTimestampOffset];
+    if (audioFirst) firstTimestamps.push(audioFirst.timestamp + audioTimestampOffset);
     const baseTimestamp = Math.min(...firstTimestamps);
     let duration = sourceDuration;
     if (!duration) {
@@ -217,6 +226,7 @@ export async function remuxToMp4(task, reporter, context) {
         firstPacket: videoFirst,
         decoderConfig: videoConfig,
         verifyKeyPackets: true,
+        timestampOffset: videoTimestampOffset,
       },
       ...(audioSource ? [{
         sink: audioSink,
@@ -224,6 +234,7 @@ export async function remuxToMp4(task, reporter, context) {
         firstPacket: audioFirst,
         decoderConfig: audioConfig,
         verifyKeyPackets: false,
+        timestampOffset: audioTimestampOffset,
       }] : []),
     ], baseTimestamp, duration, reporter, context);
     await output.finalize();
@@ -247,6 +258,7 @@ export async function remuxToMp4(task, reporter, context) {
     if (context.input !== input) context.input?.dispose();
     if (context.audioInput !== audioInput) context.audioInput?.dispose();
     prefetcher?.dispose();
+    if (context.prefetcher !== prefetcher) context.prefetcher?.dispose();
     context.input = null;
     context.audioInput = null;
     context.prefetcher = null;

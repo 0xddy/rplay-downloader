@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HlsSegmentPrefetcher } from '../src/hls-prefetch.js';
+import { SourceError } from '../src/errors.js';
 
 describe('HLS segment prefetcher', () => {
   it('reports unsupported encryption before any segment or key is prefetched', async () => {
@@ -125,5 +126,39 @@ describe('HLS segment prefetcher', () => {
     expect(segmentRequests).toBe(2);
     expect(prefetcher.bufferedBytes).toBe(8);
     prefetcher.dispose();
+  });
+
+  it('rejects consumers of queued jobs when disposed, not just active requests', async () => {
+    const playlistUrl = 'https://cdn.example/index.m3u8';
+    const fetchFn = vi.fn(async (url, init) => {
+      if (url === playlistUrl) return new Response('#EXTM3U\n#EXTINF:4,\n0.ts\n#EXTINF:4,\n1.ts\n#EXT-X-ENDLIST');
+      return new Promise((_resolve, reject) => init.signal.addEventListener('abort',
+        () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+    });
+    const prefetcher = new HlsSegmentPrefetcher(fetchFn, { concurrency: 1, windowSize: 2 });
+    await prefetcher.prepare([playlistUrl]);
+    const pending = prefetcher.fetch('https://cdn.example/1.ts');
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([playlistUrl, 'https://cdn.example/0.ts']);
+    prefetcher.dispose();
+    await rejected;
+    expect(prefetcher.jobs.size).toBe(0);
+    expect(prefetcher.queue).toHaveLength(0);
+  });
+
+  it('does not retry a forbidden media request', async () => {
+    const playlistUrl = 'https://cdn.example/index.m3u8';
+    const fetchFn = vi.fn(async (url) => {
+      if (url === playlistUrl) return new Response('#EXTM3U\n#EXTINF:4,\n0.ts\n#EXT-X-ENDLIST');
+      throw new SourceError('资源请求失败：HTTP 403', 'HTTP_403');
+    });
+    const prefetcher = new HlsSegmentPrefetcher(fetchFn);
+    try {
+      await prefetcher.prepare([playlistUrl]);
+      await expect(prefetcher.fetch('https://cdn.example/0.ts')).rejects.toMatchObject({ code: 'HTTP_403' });
+      expect(fetchFn.mock.calls.filter(([url]) => url.endsWith('.ts'))).toHaveLength(1);
+    } finally {
+      prefetcher.dispose();
+    }
   });
 });

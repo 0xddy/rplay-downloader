@@ -162,7 +162,7 @@
     "description": "DASH source status"
   },
   "dashLayoutUnsupported": {
-    "message": "이 DASH 구성은 지원하지 않습니다. 단일 Period VOD의 완전한 MP4/CMAF 음성·영상 트랙을 지원합니다.",
+    "message": "이 DASH 구성은 지원하지 않습니다. 단일 Period VOD의 완전한 MP4/CMAF 트랙 또는 연속적인 SegmentTemplate/SegmentTimeline 분할을 지원합니다.",
     "description": "Unsupported DASH addressing or timeline"
   },
   "originalQuality": {

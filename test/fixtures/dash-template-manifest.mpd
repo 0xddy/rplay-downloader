@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT38M24.266S">
+  <Period start="PT0S" duration="PT38M24.266S">
+    <AdaptationSet contentType="video" mimeType="video/mp4">
+      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cbcs"/>
+      <SegmentTemplate timescale="90000" startNumber="1"/>
+      <Representation id="1" width="1920" height="1080" bandwidth="8000000" codecs="avc1.640028">
+        <SegmentTemplate media="drm_sample_aes_V_2_$Number%09d$.cmfv" initialization="drm_sample_aes_V_2init.cmfv" startNumber="1">
+          <SegmentTimeline><S t="0" d="540000" r="383"/><S t="207360000" d="24000"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+      <Representation id="2" width="1280" height="720" bandwidth="4000000" codecs="avc1.64001f">
+        <SegmentTemplate media="drm_sample_aes_V_1_$Number%09d$.cmfv" initialization="drm_sample_aes_V_1init.cmfv">
+          <SegmentTimeline><S t="0" d="540000" r="383"/><S t="207360000" d="24000"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" mimeType="audio/mp4" lang="und">
+      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cbcs"/>
+      <SegmentTemplate timescale="48000" startNumber="1"/>
+      <Representation id="4" bandwidth="320000" codecs="mp4a.40.2">
+        <SegmentTemplate media="drm_sample_aes_A_$Number%09d$.cmfa" initialization="drm_sample_aes_Ainit.cmfa">
+          <SegmentTimeline>
+            <S t="0" d="289792"/>
+            <S t="289792" d="288768"/>
+            <S t="578560" d="287744" r="2"/>
+            <S t="1441792" d="288768"/>
+            <S t="1730560" d="287744" r="2"/>
+          </SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

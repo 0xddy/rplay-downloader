@@ -1,6 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
+import { expandDashSegmentTemplate } from './dash-segments.js';
 
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_MANIFEST_SEGMENTS = 20000;
+const MAX_EXPANDED_URL_CHARACTERS = 4 * 1024 * 1024;
 const parser = new XMLParser({
   ignoreAttributes: false,
   removeNSPrefix: true,
@@ -37,6 +40,12 @@ function positiveNumber(value) {
   return Number.isFinite(number) && number > 0 ? number : null;
 }
 
+function representationUrl(manifestUrl, id) {
+  const url = new URL(manifestUrl);
+  url.hash = `representation=${encodeURIComponent(id)}`;
+  return url.href;
+}
+
 function mediaType(attributes, bases) {
   const declared = attributes.contentType || attributes.mimeType?.split('/')[0];
   if (declared === 'video' || declared === 'audio') return declared;
@@ -60,6 +69,8 @@ export function parseDashMetadata(content, manifestUrl) {
 
   const relatedUrls = new Set([manifestUrl]);
   const representations = [];
+  let expandedSegmentCount = 0;
+  let expandedUrlCharacters = 0;
   let hasContentProtection = false;
   const periods = asArray(document.MPD.Period);
   const presentationUnsupported = document.MPD['@_type'] === 'dynamic' || periods.length !== 1
@@ -85,6 +96,11 @@ export function parseDashMetadata(content, manifestUrl) {
     const segmentMode = ownSegmentMode || inherited.segmentMode;
     const segmentBase = ownSegmentMode === 'SegmentBase'
       ? { ...inherited.segmentBase, ...node.SegmentBase } : inherited.segmentBase;
+    const segmentTemplate = ownSegmentMode === 'SegmentTemplate'
+      ? (Array.isArray(node.SegmentTemplate) ? null : {
+        ...(inherited.segmentMode === 'SegmentTemplate' ? inherited.segmentTemplate : {}),
+        ...node.SegmentTemplate,
+      }) : inherited.segmentTemplate;
     const hasBase = Boolean(inherited.hasBase || declaredBases.length);
     const main = inherited.main || asArray(node.Role).some((role) => role?.['@_value'] === 'main');
     // Enumerate only concrete URLs declared by the MPD. Directory prefixes,
@@ -109,7 +125,29 @@ export function parseDashMetadata(content, manifestUrl) {
     if (tag === 'Representation') {
       const type = mediaType(attributes, bases);
       if (type) {
-        const url = hasBase ? bases.find((base) => {
+        const id = String(node['@_id'] ?? representations.length);
+        const templates = [];
+        if (!presentationUnsupported && segmentMode === 'SegmentTemplate') {
+          // Reserve a share for each CDN alternative before expanding any of
+          // them; a small MPD must not amplify into unbounded URL metadata.
+          const segmentLimit = Math.floor((MAX_MANIFEST_SEGMENTS - expandedSegmentCount) / (bases.length || 1));
+          const characterLimit = Math.floor((MAX_EXPANDED_URL_CHARACTERS - expandedUrlCharacters) / (bases.length || 1));
+          for (const base of bases) {
+            const expanded = expandDashSegmentTemplate(segmentTemplate, base, {
+              id, bandwidth: positiveNumber(attributes.bandwidth),
+            }, segmentLimit, characterLimit);
+            if (expanded) templates.push(expanded);
+          }
+          expandedSegmentCount += templates.reduce((total, item) => total + item.segments.length, 0);
+          expandedUrlCharacters += templates.reduce((total, item) => total + item.initializationUrl.length
+            + item.segments.reduce((sum, segment) => sum + segment.url.length, 0), 0);
+        }
+        const segments = templates[0] || null;
+        for (const template of templates) {
+          relatedUrls.add(template.initializationUrl);
+          for (const segment of template.segments) relatedUrls.add(segment.url);
+        }
+        const url = segments ? representationUrl(manifestUrl, id) : hasBase ? bases.find((base) => {
           const path = new URL(base).pathname;
           return !path.endsWith('/') && (/\.(?:cmfv|cmfa|mp4|m4a|m4v)$/i.test(path)
             || (segmentMode === 'SegmentBase' && attributes.mimeType?.endsWith('/mp4')));
@@ -119,20 +157,21 @@ export function parseDashMetadata(content, manifestUrl) {
           && resolveHttpUrl(initialization['@_sourceURL'], url || manifestUrl) !== url;
         const timeOffset = Number(segmentBase?.['@_presentationTimeOffset'] || 0);
         representations.push({
-          id: String(node['@_id'] ?? representations.length),
+          id,
           type, url: url || null,
+          segments,
           width: positiveNumber(attributes.width), height: positiveNumber(attributes.height),
           bandwidth: positiveNumber(attributes.bandwidth), codecs: attributes.codecs || null,
           language: attributes.lang || null, main,
           hasContentProtection: Boolean(protection),
-          unavailableReason: presentationUnsupported || !url || externalInit || timeOffset !== 0
+          unavailableReason: segments ? null : presentationUnsupported || !url || externalInit || timeOffset !== 0
             || (segmentMode && segmentMode !== 'SegmentBase') ? 'dashLayoutUnsupported' : null,
         });
       }
     }
     for (const key of ['Period', 'AdaptationSet', 'Representation']) {
       for (const child of asArray(node[key])) {
-        visit(child, bases, { attributes, protection, segmentMode, segmentBase, hasBase, main }, key);
+        visit(child, bases, { attributes, protection, segmentMode, segmentBase, segmentTemplate, hasBase, main }, key);
       }
     }
   }
@@ -146,16 +185,18 @@ export function parseDashMetadata(content, manifestUrl) {
   ))[0] || null;
   const streams = representations.filter((track) => track.type === 'video').map((track) => ({
     // Unsupported layouts still need a stable selection identity in the UI.
-    url: track.url || `${manifestUrl}#representation=${encodeURIComponent(track.id)}`,
+    url: track.url || representationUrl(manifestUrl, track.id),
     representationId: track.id,
     resolution: track.width && track.height ? `${track.width}x${track.height}` : null,
     width: track.width, height: track.height,
     bandwidth: (track.bandwidth || 0) + (preferredAudio?.bandwidth || 0) || null,
     codecs: track.codecs,
+    videoSegments: track.segments,
     hasExternalAudio: audioTracks.length > 0,
     audioUrl: preferredAudio?.url || null,
     audioRepresentationId: preferredAudio?.id || null,
     audioLanguage: preferredAudio?.language || null,
+    audioSegments: preferredAudio?.segments || null,
     hasContentProtection: track.hasContentProtection || Boolean(preferredAudio?.hasContentProtection),
     unavailableReason: track.unavailableReason || preferredAudio?.unavailableReason || null,
   }));

@@ -162,7 +162,7 @@
     "description": "DASH source status"
   },
   "dashLayoutUnsupported": {
-    "message": "この DASH 構成は未対応です。単一 Period のオンデマンド配信で、完全な MP4/CMAF 音声・映像トラックに対応しています。",
+    "message": "この DASH 構成は未対応です。単一 Period のオンデマンド配信で、完全な MP4/CMAF トラック、または連続した SegmentTemplate/SegmentTimeline 分割に対応しています。",
     "description": "Unsupported DASH addressing or timeline"
   },
   "originalQuality": {

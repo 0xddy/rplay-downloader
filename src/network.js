@@ -1,6 +1,6 @@
 import { SourceError, TaskCanceledError, isAbortError } from './errors.js';
 
-function combineSignals(...signals) {
+export function combineSignals(...signals) {
   const available = signals.filter(Boolean);
   if (available.length === 0) return undefined;
   if (available.length === 1) return available[0];

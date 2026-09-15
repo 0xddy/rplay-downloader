@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  coalesceCmafObservations,
   getRPlaySourceType,
   inspectVideoSource,
+  isCmafTrackOnlySource,
   isKnownVideoSource,
   isRPlayMasterUrl,
   mergeVideoSources,
   shouldInspectMediaRequest,
 } from '../src/video-detector.js';
+
+const cmafObservation = (url, timestamp = 1) => ({
+  sourceType: 'cmaf', title: 'Page video', timestamp,
+  baseUrl: url, relatedUrls: [url], streams: [], unavailableReason: 'cmafNeedsPlaylist',
+});
 
 describe('RPlay video detector', () => {
   it('recognizes supported master endpoints', () => {
@@ -189,5 +196,152 @@ describe('RPlay video detector', () => {
     expect(dash.hasContentProtection).toBeNull();
     expect(dash.unavailableReason).toBe('dashUnsupported');
     expect(mergeVideoSources([cmaf], dash)).toHaveLength(2);
+  });
+
+  it('recognizes numbered DASH segments without media reads or duplicated stored indexes', async () => {
+    const base = 'https://pb3.rplay.live/example/';
+    const fetchFn = vi.fn(async () => new Response('<MPD type="static"><Period start="PT0S">'
+      + '<AdaptationSet mimeType="video/mp4"><SegmentTemplate timescale="90000"/>'
+      + '<Representation id="1" width="1920" height="1080"><SegmentTemplate '
+      + 'media="drm_sample_aes_V_2_$Number%09d$.cmfv" initialization="drm_sample_aes_V_2init.cmfv">'
+      + '<SegmentTimeline><S t="0" d="540000" r="383"/><S t="207360000" d="24000"/>'
+      + '</SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period></MPD>'));
+    const first = cmafObservation(`${base}drm_sample_aes_V_2_000000001.cmfv`);
+    const last = cmafObservation(`${base}drm_sample_aes_V_2_000000385.cmfv`);
+    const dash = await inspectVideoSource(`${base}manifest.mpd`, { fetchFn });
+    expect(dash).toMatchObject({ sourceType: 'dash', unavailableReason: null });
+    expect(dash.streams[0]).toMatchObject({ url: `${base}manifest.mpd#representation=1`, unavailableReason: null });
+    expect(dash.streams[0]).not.toHaveProperty('videoSegments');
+    expect(dash.streams[0]).not.toHaveProperty('audioSegments');
+    expect(dash.relatedUrls).toContain(first.baseUrl);
+    expect(dash.relatedUrls).toContain(last.baseUrl);
+    expect(mergeVideoSources(mergeVideoSources([first], last), dash)).toEqual([dash]);
+    expect(mergeVideoSources([dash], last)).toEqual([dash]);
+    expect(fetchFn.mock.calls).toEqual([[`${base}manifest.mpd`, expect.any(Object)]]);
+  });
+
+  it('coalesces unique playback segment requests into one stable page observation', () => {
+    const urls = Array.from({ length: 100 }, (_, index) => (
+      `https://pb3.rplay.live/example/segment-${index}.cmfv?signature=${index}`
+    ));
+    let videos = [];
+    for (const [index, url] of urls.entries()) {
+      videos = mergeVideoSources(videos, cmafObservation(url, index + 1));
+    }
+    expect(videos).toHaveLength(1);
+    expect(videos[0]).toMatchObject({
+      baseUrl: urls[0], timestamp: 1, title: 'Page video', streams: [],
+      unavailableReason: 'cmafNeedsPlaylist', observedUrls: urls, relatedUrls: urls,
+    });
+    for (const url of urls) expect(isKnownVideoSource(videos, url)).toBe(true);
+    expect(mergeVideoSources(videos, cmafObservation(urls[99], 200))).toBe(videos);
+  });
+
+  it('retains signed query variations exactly rather than guessing media ownership', () => {
+    const first = 'https://pb3.rplay.live/example/video.cmfv?content=one&signature=first';
+    const second = 'https://pb3.rplay.live/example/video.cmfv?content=two&signature=second';
+    const pending = mergeVideoSources([cmafObservation(first)], cmafObservation(second));
+    const manifest = { baseUrl: 'https://pb3.rplay.live/example/one.mpd', sourceType: 'dash',
+      relatedUrls: [first], streams: [{ url: first }] };
+    const merged = mergeVideoSources(pending, manifest);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({ baseUrl: second, observedUrls: [second], streams: [] });
+    expect(merged[1]).toBe(manifest);
+    expect(manifest.relatedUrls).not.toContain(second);
+  });
+
+  it('coalesces legacy stored notices without disturbing complete sources or their order', () => {
+    const first = cmafObservation('https://pb3.rplay.live/one/segment.cmfv');
+    const second = cmafObservation('https://media.rplay-cdn.com/two/segment.cmfv', 2);
+    const manifest = { sourceType: 'hls', baseUrl: 'https://pb3.rplay.live/master.m3u8', streams: [] };
+    const grouped = coalesceCmafObservations([first, manifest, second]);
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]).toMatchObject({ baseUrl: first.baseUrl, timestamp: 1,
+      observedUrls: [first.baseUrl, second.baseUrl] });
+    expect(grouped[1]).toBe(manifest);
+    expect(coalesceCmafObservations(grouped)).toBe(grouped);
+  });
+
+  it('removes exact manifest-owned URLs while restoring legacy observations', () => {
+    const first = cmafObservation('https://pb3.rplay.live/example/owned.cmfv');
+    const second = cmafObservation('https://pb3.rplay.live/example/unknown.cmfv', 2);
+    const manifest = { sourceType: 'dash', baseUrl: 'https://pb3.rplay.live/example/manifest.mpd',
+      relatedUrls: [first.baseUrl], streams: [{ url: first.baseUrl }] };
+    const result = coalesceCmafObservations([first, manifest, second]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(manifest);
+    expect(result[1]).toMatchObject({ baseUrl: second.baseUrl, observedUrls: [second.baseUrl] });
+    expect(coalesceCmafObservations([first, manifest])).toEqual([manifest]);
+    const grouped = mergeVideoSources([first], second);
+    expect(coalesceCmafObservations([...grouped, manifest])[0])
+      .toMatchObject({ baseUrl: second.baseUrl, observedUrls: [second.baseUrl] });
+  });
+
+  it('preserves observations after storage cloning and subsequent segment requests', () => {
+    const first = cmafObservation('https://pb3.rplay.live/example/first.cmfv');
+    const second = cmafObservation('https://pb3.rplay.live/example/second.cmfv');
+    const third = cmafObservation('https://pb3.rplay.live/example/third.cmfv');
+    const stored = structuredClone(mergeVideoSources([first], second));
+    const result = mergeVideoSources(stored, third);
+    expect(result).toHaveLength(1);
+    expect(result[0].observedUrls).toEqual([first.baseUrl, second.baseUrl, third.baseUrl]);
+  });
+
+  it('retains unknown grouped observations even when their representative URL is already known', () => {
+    const first = cmafObservation('https://pb3.rplay.live/example/known.cmfv');
+    const second = cmafObservation('https://pb3.rplay.live/example/unknown.cmfv');
+    const grouped = mergeVideoSources([first], second)[0];
+    const manifest = { sourceType: 'dash', baseUrl: 'https://pb3.rplay.live/example/manifest.mpd',
+      relatedUrls: [first.baseUrl], streams: [{ url: first.baseUrl }] };
+    const result = mergeVideoSources([manifest], grouped);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(manifest);
+    expect(result[1]).toMatchObject({ baseUrl: second.baseUrl, observedUrls: [second.baseUrl] });
+    expect(mergeVideoSources([first], grouped)[0].observedUrls).toEqual([first.baseUrl, second.baseUrl]);
+  });
+
+  it.each(['first', 'last'])('removes only explicitly matched observed tracks (%s match)', (match) => {
+    const urls = ['https://pb3.rplay.live/example/first.cmfv', 'https://pb3.rplay.live/example/last.cmfv'];
+    const matched = match === 'first' ? urls[0] : urls[1];
+    const remaining = urls.find((url) => url !== matched);
+    const pending = mergeVideoSources([cmafObservation(urls[0])], cmafObservation(urls[1]));
+    const manifest = { sourceType: 'hls', baseUrl: 'https://pb3.rplay.live/example/master.m3u8',
+      relatedUrls: [matched], streams: [{ url: matched }] };
+    const result = mergeVideoSources(pending, manifest);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ baseUrl: remaining, observedUrls: [remaining], relatedUrls: [remaining] });
+    expect(result[1]).toBe(manifest);
+    const lastManifest = { ...manifest, baseUrl: 'https://pb3.rplay.live/example/last.mpd', sourceType: 'dash',
+      relatedUrls: [remaining], streams: [{ url: remaining }] };
+    expect(mergeVideoSources(result, lastManifest)).toEqual([manifest, lastManifest]);
+  });
+
+  it('keeps manifests authoritative when they arrive before unknown playback segments', () => {
+    const known = 'https://pb3.rplay.live/example/known.cmfv';
+    const manifest = { sourceType: 'dash', baseUrl: 'https://pb3.rplay.live/example/manifest.mpd',
+      relatedUrls: [known], streams: [{ url: known }] };
+    const videos = [manifest];
+    expect(mergeVideoSources(videos, cmafObservation(known))).toBe(videos);
+    const first = 'https://pb3.rplay.live/example/unknown-1.cmfv';
+    const second = 'https://pb3.rplay.live/example/unknown-2.cmfv';
+    const grouped = mergeVideoSources(mergeVideoSources(videos, cmafObservation(first)), cmafObservation(second));
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]).toBe(manifest);
+    expect(grouped[1]).toMatchObject({ observedUrls: [first, second], streams: [] });
+  });
+
+  it('does not coalesce downloadable CMAF sources or explicit unsupported manifests', () => {
+    const pending = cmafObservation('https://pb3.rplay.live/example/segment.cmfv');
+    const playable = { ...pending, baseUrl: 'https://pb3.rplay.live/example/full.cmfv',
+      relatedUrls: ['https://pb3.rplay.live/example/full.cmfv'],
+      unavailableReason: null, streams: [{ url: 'https://pb3.rplay.live/example/full.cmfv' }] };
+    const unsupported = { ...pending, sourceType: 'dash', unavailableReason: 'dashUnsupported',
+      relatedUrls: ['https://pb3.rplay.live/example/manifest.mpd'],
+      baseUrl: 'https://pb3.rplay.live/example/manifest.mpd' };
+    expect(isCmafTrackOnlySource(pending)).toBe(true);
+    expect(isCmafTrackOnlySource(playable)).toBe(false);
+    expect(isCmafTrackOnlySource(unsupported)).toBe(false);
+    const videos = [pending, playable, unsupported];
+    expect(coalesceCmafObservations(videos)).toBe(videos);
   });
 });

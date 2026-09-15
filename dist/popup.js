@@ -69,6 +69,7 @@ ${streamUrl || ""}`;
     CANCEL_TASK: "CANCEL_TASK",
     OPEN_POPUP: "OPEN_POPUP",
     VIDEO_DETECTED: "VIDEO_DETECTED",
+    VIDEO_INFO_CLEARED: "VIDEO_INFO_CLEARED",
     GET_PAGE_VIDEO_TITLE: "GET_PAGE_VIDEO_TITLE",
     TASK_CREATED: "TASK_CREATED",
     TASK_UPDATED: "TASK_UPDATED",
@@ -113,6 +114,8 @@ ${streamUrl || ""}`;
   var currentTasks = [];
   var videos = [];
   var currentPageTitle = "";
+  var videoLoadVersion = 0;
+  var pageTitleLoadVersion = 0;
   function message(key, substitutions, fallback = "") {
     return chrome.i18n.getMessage(key, substitutions) || fallback;
   }
@@ -131,11 +134,17 @@ ${streamUrl || ""}`;
     initI18n();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     currentTabId = tab?.id ?? null;
-    await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
-    render();
     chrome.runtime.onMessage.addListener((request) => {
+      if (request.type === MessageType.VIDEO_INFO_CLEARED && request.tabId === currentTabId) {
+        videoLoadVersion += 1;
+        pageTitleLoadVersion += 1;
+        videos = [];
+        currentPageTitle = "";
+        render();
+        return;
+      }
       if (request.type === MessageType.VIDEO_DETECTED && request.tabId === currentTabId) {
-        void loadVideos().then(render);
+        void Promise.all([loadVideos(), loadPageTitle()]).then(render);
         return;
       }
       if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
@@ -152,25 +161,31 @@ ${streamUrl || ""}`;
         showStatusMessage(request.task.error || "\u4E0B\u8F7D\u5931\u8D25", "error");
       }
     });
+    await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
+    render();
   });
   async function loadVideos() {
-    if (!currentTabId) return;
+    if (currentTabId === null) return;
+    const version = ++videoLoadVersion;
     const response = await chrome.runtime.sendMessage({
       type: MessageType.GET_VIDEO_INFO,
       tabId: currentTabId
     }).catch(() => null);
-    videos = response?.videos || [];
+    if (version === videoLoadVersion) videos = response?.videos || [];
   }
   async function loadTasks() {
     const response = await chrome.runtime.sendMessage({ type: MessageType.GET_TASKS }).catch(() => null);
-    currentTasks = response?.tasks || [];
+    const restored = new Map((response?.tasks || []).map((task) => [task.taskId, task]));
+    for (const task of currentTasks) restored.set(task.taskId, task);
+    currentTasks = [...restored.values()].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
   }
   async function loadPageTitle() {
-    if (!currentTabId) return;
+    if (currentTabId === null) return;
+    const version = ++pageTitleLoadVersion;
     const pageInfo = await chrome.tabs.sendMessage(currentTabId, {
       type: MessageType.GET_PAGE_VIDEO_TITLE
     }).catch(() => null);
-    currentPageTitle = normalizeVideoTitle(pageInfo?.title);
+    if (version === pageTitleLoadVersion) currentPageTitle = normalizeVideoTitle(pageInfo?.title);
   }
   function upsertTask(task) {
     const index = currentTasks.findIndex((item) => item.taskId === task.taskId);

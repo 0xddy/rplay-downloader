@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createSourceId, estimateMediaBytes } from '../src/media.js';
-import { TaskPhase, canTransitionTask } from '../src/protocol.js';
+import { BACKGROUND_MESSAGE_TYPES, MessageType, TaskPhase, canTransitionTask } from '../src/protocol.js';
 
 describe('shared task protocol', () => {
+  it('defines a media-clear notification without treating it as a background request', () => {
+    expect(MessageType.VIDEO_INFO_CLEARED).toBe('VIDEO_INFO_CLEARED');
+    expect(BACKGROUND_MESSAGE_TYPES.has(MessageType.VIDEO_INFO_CLEARED)).toBe(false);
+  });
+
   it('allows only valid task phase transitions', () => {
     expect(canTransitionTask(TaskPhase.QUEUED, TaskPhase.PREPARING)).toBe(true);
     expect(canTransitionTask(TaskPhase.REMUXING, TaskPhase.FALLBACK_TS)).toBe(true);

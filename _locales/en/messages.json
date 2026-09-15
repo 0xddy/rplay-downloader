@@ -162,7 +162,7 @@
     "description": "DASH source status"
   },
   "dashLayoutUnsupported": {
-    "message": "This DASH layout is not supported. Single-period VOD with complete MP4/CMAF audio and video tracks is supported.",
+    "message": "This DASH layout is not supported. Single-period VOD with complete MP4/CMAF tracks or continuous SegmentTemplate/SegmentTimeline segments is supported.",
     "description": "Unsupported DASH addressing or timeline"
   },
   "originalQuality": {

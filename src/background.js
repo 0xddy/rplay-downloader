@@ -9,7 +9,15 @@ import {
   TaskPhase,
 } from './protocol.js';
 import { TaskStore, toPublicTask } from './task-store.js';
-import { inspectVideoSource, isKnownVideoSource, mergeVideoSources, shouldInspectMediaRequest } from './video-detector.js';
+import {
+  coalesceCmafObservations,
+  getRPlaySourceType,
+  inspectVideoSource,
+  isCmafTrackOnlySource,
+  isKnownVideoSource,
+  mergeVideoSources,
+  shouldInspectMediaRequest,
+} from './video-detector.js';
 
 const URL_CACHE_DURATION = 3_000;
 const CANCEL_CLEANUP_TIMEOUT = 8_000;
@@ -18,6 +26,8 @@ const VIDEO_STORAGE_PREFIX = 'rplayVideos:';
 const videoInfo = new Map();
 const processedUrls = new Map();
 const detectionContexts = new Map();
+const detectionStorageWrites = new Map();
+const cmafTitleRequests = new Map();
 const queue = [];
 const pendingDownloads = new Map();
 const pendingFilenamesByUrl = new Map();
@@ -44,6 +54,42 @@ function shouldProcessUrl(tabId, url) {
   if (previous && now - previous < URL_CACHE_DURATION) return false;
   processedUrls.set(key, now);
   return true;
+}
+
+function getDetectionContext(tabId) {
+  if (!detectionContexts.has(tabId)) detectionContexts.set(tabId, Symbol());
+  return detectionContexts.get(tabId);
+}
+
+function getDetectedVideos(tabId) {
+  const videos = videoInfo.get(tabId) || [];
+  const normalized = coalesceCmafObservations(videos);
+  if (normalized !== videos) videoInfo.set(tabId, normalized);
+  return normalized;
+}
+
+function resolveCmafPageTitle(tabId, context) {
+  const notice = getDetectedVideos(tabId).find(isCmafTrackOnlySource);
+  if (notice) return Promise.resolve(notice.title);
+  const pending = cmafTitleRequests.get(tabId);
+  if (pending?.context === context) return pending.promise;
+  // Concurrent first segments share one page-title request. Subsequent ones
+  // keep the notice's original title rather than probing the page every time.
+  const promise = resolvePageTitle(tabId);
+  cmafTitleRequests.set(tabId, { context, promise });
+  return promise;
+}
+
+function writeDetectionStorage(tabId, write) {
+  // A storage write already in flight cannot be canceled. Keep navigation
+  // cleanup behind it, and new-page writes behind that cleanup.
+  const previous = detectionStorageWrites.get(tabId);
+  const pending = previous ? previous.catch(() => {}).then(write) : Promise.resolve(write());
+  detectionStorageWrites.set(tabId, pending);
+  pending.finally(() => {
+    if (detectionStorageWrites.get(tabId) === pending) detectionStorageWrites.delete(tabId);
+  }).catch(() => {});
+  return pending;
 }
 
 function createTaskId() {
@@ -214,6 +260,7 @@ async function createDownloadTask(request) {
   ));
   if (duplicate) return toPublicTask(duplicate);
   const licenseKey = `${LICENSE_STORAGE_PREFIX}${request.tabId}`;
+  await detectionStorageWrites.get(request.tabId)?.catch(() => {});
   const licenseUrl = (await chrome.storage.session.get(licenseKey))[licenseKey];
   const task = {
     taskId,
@@ -444,10 +491,14 @@ async function handleMessage(request) {
   switch (request.type) {
     case MessageType.GET_VIDEO_INFO: {
       const tabId = request.tabId;
-      if (videoInfo.has(tabId)) return { videos: videoInfo.get(tabId) };
+      if (videoInfo.has(tabId)) return { videos: getDetectedVideos(tabId) };
+      const context = getDetectionContext(tabId);
       const key = `${VIDEO_STORAGE_PREFIX}${tabId}`;
       const stored = await chrome.storage.local.get(key);
-      const videos = stored[key] || [];
+      if (detectionContexts.get(tabId) !== context || videoInfo.has(tabId)) {
+        return { videos: getDetectedVideos(tabId) };
+      }
+      const videos = coalesceCmafObservations(stored[key] || []);
       videoInfo.set(tabId, videos);
       return { videos };
     }
@@ -539,30 +590,43 @@ chrome.webRequest.onBeforeRequest.addListener(
     if (isWidevineLicenseUrl(url)) {
       if (tabId >= 0 && details.method === 'POST' && /^https:\/\/([\w-]+\.)*rplay\.live$/.test(details.initiator || '')) {
         // Session storage is not exposed to content scripts. Never broadcast this URL.
-        void chrome.storage.session.set({ [`${LICENSE_STORAGE_PREFIX}${tabId}`]: url });
+        const context = getDetectionContext(tabId);
+        void writeDetectionStorage(tabId, () => {
+          if (detectionContexts.get(tabId) !== context) return;
+          return chrome.storage.session.set({ [`${LICENSE_STORAGE_PREFIX}${tabId}`]: url });
+        })
+          .catch(() => {});
       }
       return;
     }
     if (!shouldInspectMediaRequest(details)) return;
-    if (isKnownVideoSource(videoInfo.get(tabId) || [], url) || !shouldProcessUrl(tabId, url)) return;
-    if (!detectionContexts.has(tabId)) detectionContexts.set(tabId, Symbol());
-    const context = detectionContexts.get(tabId);
+    if (isKnownVideoSource(getDetectedVideos(tabId), url) || !shouldProcessUrl(tabId, url)) return;
+    const context = getDetectionContext(tabId);
 
     setTimeout(async () => {
       try {
-        if (detectionContexts.get(tabId) !== context || isKnownVideoSource(videoInfo.get(tabId) || [], url)) return;
+        if (detectionContexts.get(tabId) !== context || isKnownVideoSource(getDetectedVideos(tabId), url)) return;
         const detected = await inspectVideoSource(url, {
           fetchFn: (input, init = {}) => fetch(input, { ...init, credentials: 'include' }),
-          resolveTitle: () => resolvePageTitle(tabId),
+          resolveTitle: () => getRPlaySourceType(url) === 'cmaf'
+            ? resolveCmafPageTitle(tabId, context) : resolvePageTitle(tabId),
           now: Date.now,
         });
         if (!detected || detectionContexts.get(tabId) !== context) return;
-        const previous = videoInfo.get(tabId) || [];
+        const previous = getDetectedVideos(tabId);
         const list = mergeVideoSources(previous, detected);
         if (list === previous) return;
         videoInfo.set(tabId, list);
-        await chrome.storage.local.set({ [`${VIDEO_STORAGE_PREFIX}${tabId}`]: list });
-        await updateBadge(String(list.length), '#666666', tabId);
+        await writeDetectionStorage(tabId, () => {
+          if (detectionContexts.get(tabId) !== context) return;
+          return chrome.storage.local.set({ [`${VIDEO_STORAGE_PREFIX}${tabId}`]: list });
+        });
+        if (detectionContexts.get(tabId) !== context) return;
+        if (list.length !== previous.length) await updateBadge(String(list.length), '#666666', tabId);
+        if (detectionContexts.get(tabId) !== context) return;
+        // Adding an exact segment URL only updates this page's observation
+        // group. It is not a new media item, so leave popup/content UI alone.
+        if (isCmafTrackOnlySource(detected) && previous.some(isCmafTrackOnlySource)) return;
         broadcast({ type: MessageType.VIDEO_DETECTED, tabId, data: detected });
       } catch (error) {
         console.error('[RPlay] 检测媒体失败:', error);
@@ -572,22 +636,34 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ['*://*.rplay-cdn.com/*', '*://*.rplay.live/*', 'https://widevine-dash.ezdrm.com/*'] },
 );
 
-function clearTabDetection(tabId) {
-  detectionContexts.delete(tabId);
-  videoInfo.delete(tabId);
+function clearTabDetection(tabId, { removed = false } = {}) {
+  cmafTitleRequests.delete(tabId);
+  if (removed) {
+    detectionContexts.delete(tabId);
+    videoInfo.delete(tabId);
+  } else {
+    detectionContexts.set(tabId, Symbol());
+    // Do not restore old persisted entries while their removal is pending.
+    videoInfo.set(tabId, []);
+  }
   for (const key of processedUrls.keys()) {
     if (key.startsWith(`${tabId}:`)) processedUrls.delete(key);
   }
-  chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`).catch(() => {});
-  chrome.storage.session.remove(`${LICENSE_STORAGE_PREFIX}${tabId}`).catch(() => {});
+  void writeDetectionStorage(tabId, () => Promise.all([
+    chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`),
+    chrome.storage.session.remove(`${LICENSE_STORAGE_PREFIX}${tabId}`),
+  ])).catch(() => {});
+  if (!removed) broadcast({ type: MessageType.VIDEO_INFO_CLEARED, tabId });
 }
 
-chrome.tabs.onRemoved.addListener(clearTabDetection);
+chrome.tabs.onRemoved.addListener((tabId) => clearTabDetection(tabId, { removed: true }));
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (!changeInfo.url) return;
+  if (!changeInfo.url && changeInfo.status !== 'loading') return;
   clearTabDetection(tabId);
-  void updateBadge('', '#666666', tabId);
+  // Navigation only resets sniffed media; an independent download keeps
+  // running and retains its progress badge.
+  if (tasks.get(activeTaskId)?.tabId !== tabId) void updateBadge('', '#666666', tabId);
 });
 
 setInterval(() => {

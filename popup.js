@@ -11,6 +11,8 @@ let currentTabId = null;
 let currentTasks = [];
 let videos = [];
 let currentPageTitle = '';
+let videoLoadVersion = 0;
+let pageTitleLoadVersion = 0;
 
 function message(key, substitutions, fallback = '') {
   return chrome.i18n.getMessage(key, substitutions) || fallback;
@@ -32,12 +34,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   initI18n();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   currentTabId = tab?.id ?? null;
-  await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
-  render();
 
   chrome.runtime.onMessage.addListener((request) => {
+    if (request.type === MessageType.VIDEO_INFO_CLEARED && request.tabId === currentTabId) {
+      // Invalidate reads already in flight so a late response cannot restore
+      // the previous page's sources or title after a reload/navigation.
+      videoLoadVersion += 1;
+      pageTitleLoadVersion += 1;
+      videos = [];
+      currentPageTitle = '';
+      render();
+      return;
+    }
     if (request.type === MessageType.VIDEO_DETECTED && request.tabId === currentTabId) {
-      void loadVideos().then(render);
+      void Promise.all([loadVideos(), loadPageTitle()]).then(render);
       return;
     }
     if (!TASK_EVENT_MESSAGE_TYPES.has(request.type) || !request.task) return;
@@ -56,28 +66,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       showStatusMessage(request.task.error || '下载失败', 'error');
     }
   });
+
+  await Promise.all([loadVideos(), loadTasks(), loadPageTitle()]);
+  render();
 });
 
 async function loadVideos() {
-  if (!currentTabId) return;
+  if (currentTabId === null) return;
+  const version = ++videoLoadVersion;
   const response = await chrome.runtime.sendMessage({
     type: MessageType.GET_VIDEO_INFO,
     tabId: currentTabId,
   }).catch(() => null);
-  videos = response?.videos || [];
+  if (version === videoLoadVersion) videos = response?.videos || [];
 }
 
 async function loadTasks() {
   const response = await chrome.runtime.sendMessage({ type: MessageType.GET_TASKS }).catch(() => null);
-  currentTasks = response?.tasks || [];
+  const restored = new Map((response?.tasks || []).map((task) => [task.taskId, task]));
+  // Task events may arrive before the startup snapshot. Keep those newer
+  // updates rather than dropping a download when that older read completes.
+  for (const task of currentTasks) restored.set(task.taskId, task);
+  currentTasks = [...restored.values()].sort((left, right) => (
+    (right.createdAt || 0) - (left.createdAt || 0)
+  ));
 }
 
 async function loadPageTitle() {
-  if (!currentTabId) return;
+  if (currentTabId === null) return;
+  const version = ++pageTitleLoadVersion;
   const pageInfo = await chrome.tabs.sendMessage(currentTabId, {
     type: MessageType.GET_PAGE_VIDEO_TITLE,
   }).catch(() => null);
-  currentPageTitle = normalizeVideoTitle(pageInfo?.title);
+  if (version === pageTitleLoadVersion) currentPageTitle = normalizeVideoTitle(pageInfo?.title);
 }
 
 function upsertTask(task) {

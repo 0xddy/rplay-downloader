@@ -162,7 +162,7 @@
     "description": "DASH source status"
   },
   "dashLayoutUnsupported": {
-    "message": "此 DASH 布局暂不支持。当前支持单时段点播、完整 MP4/CMAF 音视频轨。",
+    "message": "此 DASH 布局暂不支持。当前支持单时段点播的完整 MP4/CMAF 轨道，以及连续 SegmentTemplate/SegmentTimeline 分段。",
     "description": "Unsupported DASH addressing or timeline"
   },
   "originalQuality": {

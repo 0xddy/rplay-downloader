@@ -1,5 +1,5 @@
 import { getPrefetchableSegmentUrls, getUnsupportedHlsEncryption } from './hls.js';
-import { SourceError } from './errors.js';
+import { SourceError, isAbortError } from './errors.js';
 
 function inputUrl(input) {
   if (typeof input === 'string') return input;
@@ -231,7 +231,8 @@ export class HlsSegmentPrefetcher {
         };
       } catch (error) {
         lastError = error;
-        if (this.controller.signal.aborted || attempt === this.retries - 1) throw error;
+        if (this.controller.signal.aborted || isAbortError(error) || /^HTTP_4\d\d$/.test(error?.code || '')
+          || attempt === this.retries - 1) throw error;
         await wait(400 * 2 ** attempt);
       }
     }
@@ -242,6 +243,9 @@ export class HlsSegmentPrefetcher {
     if (this.disposed) return;
     this.disposed = true;
     this.controller.abort();
+    // Queued jobs have no running fetch to receive the abort signal. Reject
+    // their consumers too, otherwise cancellation can wait forever on them.
+    for (const job of this.jobs.values()) job.reject(new DOMException('Aborted', 'AbortError'));
     this.queue.length = 0;
     this.playlists.clear();
     this.segmentLocations.clear();

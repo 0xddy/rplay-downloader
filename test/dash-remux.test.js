@@ -8,6 +8,7 @@ import { createCdmKeyResolver } from '../src/cdm-client.js';
 import { BrowserCdm, importWvd } from '../src/cdm-browser.js';
 import { syntheticLicense, syntheticWvd } from './helpers/cdm-fixtures.js';
 import { createMemoryOpfs } from './helpers/memory-opfs.js';
+import { segmentedDashFixture, withAudioPrimingEdit } from './helpers/dash-segments-fixture.js';
 
 const base = 'https://pb3.rplay.live/test/';
 const manifestUrl = `${base}manifest.mpd`;
@@ -58,6 +59,159 @@ describe('DASH download and MP4 remux', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  function useSegmentedFixture(video = videoBytes, audio = audioBytes, scheme = null) {
+    const segmented = segmentedDashFixture(video, audio, base, scheme);
+    const metadata = parseDashMetadata(segmented.manifest, manifestUrl);
+    const [stream] = metadata.streams;
+    Object.assign(task, { ...stream, streamUrl: stream.url, duration: metadata.duration });
+    fetchFn.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === manifestUrl) return new Response(segmented.manifest);
+      const bytes = segmented.resources.get(url);
+      if (!bytes) throw new Error(`Unexpected segmented DASH network URL: ${url}`);
+      return responseFor(bytes, init);
+    });
+    return segmented;
+  }
+
+  async function expectPreservedSegmentedPackets(temp, originalAudio = audioBytes) {
+    const result = new Input({ formats: [MP4], source: new BufferSource(await (await temp.handle.getFile()).arrayBuffer()) });
+    const originalVideoInput = new Input({ formats: [MP4], source: new BufferSource(videoBytes) });
+    const originalAudioInput = new Input({ formats: [MP4], source: new BufferSource(originalAudio) });
+    try {
+      const expectedVideo = await packets(await originalVideoInput.getPrimaryVideoTrack());
+      const expectedAudio = await packets(await originalAudioInput.getPrimaryAudioTrack());
+      const baseTimestamp = Math.min(expectedVideo[0].timestamp, expectedAudio[0].timestamp);
+      let largestTimestampDifference = 0;
+      for (const [expected, getTrack] of [[expectedVideo, 'getPrimaryVideoTrack'], [expectedAudio, 'getPrimaryAudioTrack']]) {
+        const actual = await packets(await result[getTrack]());
+        expect(actual.map((packet) => packet.data)).toEqual(expected.map((packet) => packet.data));
+        expect(actual).toHaveLength(expected.length);
+        for (let index = 0; index < actual.length; index++) {
+          const difference = Math.abs(actual[index].timestamp - (expected[index].timestamp - baseTimestamp));
+          largestTimestampDifference = Math.max(largestTimestampDifference, difference);
+          expect(difference).toBeLessThan(1 / 48000);
+          expect(actual[index].duration).toBeCloseTo(expected[index].duration, 5);
+        }
+      }
+      return largestTimestampDifference;
+    } finally {
+      result.dispose(); originalVideoInput.dispose(); originalAudioInput.dispose();
+    }
+  }
+
+  it('downloads initialization plus padded-number DASH segments and preserves independent audio/video timelines', async () => {
+    const segmented = useSegmentedFixture();
+    expect(segmented.videoTrack.segments).toHaveLength(2);
+    expect(segmented.audioTrack.segments).toHaveLength(1);
+    expect(segmented.audioTrack.segments[0].ticks / segmented.audioTrack.timescale).not.toBe(1);
+    const temp = await remuxToMp4(task, reporter, context);
+    expect(await expectPreservedSegmentedPackets(temp)).toBeLessThan(1 / 48000);
+    const requestedUrls = new Set(fetchFn.mock.calls.map(([url]) => String(url)));
+    for (const url of segmented.resources.keys()) expect(requestedUrls.has(url)).toBe(true);
+    expect([...requestedUrls].every((url) => url === manifestUrl || segmented.resources.has(url))).toBe(true);
+    expect(context.input).toBeNull();
+    expect(context.audioInput).toBeNull();
+    expect(context.prefetcher).toBeNull();
+  });
+
+  it.each(['cenc', 'cbcs'])('decrypts separated %s initialization/media segments through the license flow', async (scheme) => {
+    const segmented = useSegmentedFixture(await fixture(`${scheme}-video.mp4`), await fixture(`${scheme}-audio.mp4`), scheme);
+    task.licenseUrl = 'https://widevine-dash.ezdrm.com/widevine-php/widevine-foreignkey.php?token=synthetic-segments';
+    const licenseFetch = vi.fn(async (_url, init) => new Response(syntheticLicense(init.body)));
+    context.resolveMediaKey = createCdmKeyResolver(task, context, {
+      fetchFn: licenseFetch, createCdm: async () => new BrowserCdm(await importWvd(syntheticWvd())),
+    });
+    try {
+      const temp = await remuxToMp4(task, reporter, context);
+      expect(await expectPreservedSegmentedPackets(temp)).toBeLessThan(1 / 48000);
+      expect(licenseFetch.mock.calls.filter(([url]) => url === task.licenseUrl)).toHaveLength(2);
+      const requestedUrls = new Set(fetchFn.mock.calls.map(([url]) => String(url)));
+      for (const url of segmented.resources.keys()) expect(requestedUrls.has(url)).toBe(true);
+      expect([...requestedUrls].every((url) => url === manifestUrl || segmented.resources.has(url))).toBe(true);
+    } finally {
+      context.resolveMediaKey.dispose();
+    }
+  });
+
+  it('preserves an audio priming edit instead of independently zeroing segmented audio and video', async () => {
+    const primedAudio = withAudioPrimingEdit(audioBytes);
+    useSegmentedFixture(videoBytes, primedAudio);
+    const temp = await remuxToMp4(task, reporter, context);
+    expect(await expectPreservedSegmentedPackets(temp, primedAudio)).toBeLessThan(1 / 48000);
+  });
+
+  it.each(['audio', 'video'])('supports a complete %s track paired with a segmented other track', async (completeType) => {
+    const segmented = useSegmentedFixture();
+    const extension = completeType === 'video' ? 'cmfv' : 'cmfa';
+    const attributes = completeType === 'video' ? 'width="160" height="90" codecs="avc1.42c00a"' : 'codecs="mp4a.40.2"';
+    const mixedManifest = segmented.manifest.replace(new RegExp(`<AdaptationSet mimeType="${completeType}/mp4">.*?</AdaptationSet>`),
+      `<AdaptationSet mimeType="${completeType}/mp4"><Representation id="${completeType === 'video' ? 'v1' : 'a1'}" ${attributes}>`
+      + `<BaseURL>dash-${completeType}.${extension}</BaseURL><SegmentBase/></Representation></AdaptationSet>`);
+    const [stream] = parseDashMetadata(mixedManifest, manifestUrl).streams;
+    Object.assign(task, { ...stream, streamUrl: stream.url });
+    const originalFetch = fetchFn.getMockImplementation();
+    fetchFn.mockImplementation((url, init) => {
+      if (String(url) === manifestUrl) return Promise.resolve(new Response(mixedManifest));
+      if (String(url) === `${base}dash-${completeType}.${extension}`) {
+        return Promise.resolve(responseFor(completeType === 'video' ? videoBytes : audioBytes, init));
+      }
+      return originalFetch(url, init);
+    });
+    const temp = await remuxToMp4(task, reporter, context);
+    expect(await expectPreservedSegmentedPackets(temp)).toBeLessThan(1 / 48000);
+    expect(fetchFn.mock.calls.some(([url]) => String(url) === `${base}dash-${completeType}.${extension}`)).toBe(true);
+    expect(context.prefetcher).toBeNull();
+  });
+
+  it('rejects a changed audio representation even when it reuses the same complete-track URL', async () => {
+    fetchFn.mockImplementationOnce(async () => new Response(manifest.replace('id="audio"', 'id="audio-new"')));
+    await expect(remuxToMp4(task, reporter, context)).rejects.toMatchObject({ code: 'DASH_SELECTION_CHANGED' });
+    expect(storage.files.size).toBe(0);
+    expect(context.input).toBeNull();
+    expect(context.audioInput).toBeNull();
+    expect(context.prefetcher).toBeNull();
+  });
+
+  it('removes partial output when a selected DASH audio segment fails', async () => {
+    useSegmentedFixture();
+    const originalFetch = fetchFn.getMockImplementation();
+    fetchFn.mockImplementation((url, init) => String(url).endsWith('audio_000000001.cmfa')
+      ? Promise.resolve(new Response('Forbidden', { status: 403 })) : originalFetch(url, init));
+    await expect(remuxToMp4(task, reporter, context)).rejects.toThrow(/HTTP 403/);
+    expect(storage.files.size).toBe(0);
+    expect(context.input).toBeNull();
+    expect(context.audioInput).toBeNull();
+    expect(context.prefetcher).toBeNull();
+    expect(context.output).toBeNull();
+  });
+
+  it('cancels segmented media requests and clears both inputs, prefetching, and partial output', async () => {
+    useSegmentedFixture();
+    let started;
+    let mediaSignal;
+    const audioStarted = new Promise((resolve) => { started = resolve; });
+    const originalFetch = fetchFn.getMockImplementation();
+    fetchFn.mockImplementation((url, init) => {
+      if (!String(url).endsWith('audio_000000001.cmfa')) return originalFetch(url, init);
+      mediaSignal = init.signal;
+      started();
+      return new Promise((_resolve, reject) => init.signal.addEventListener('abort',
+        () => reject(new DOMException('Canceled', 'AbortError')), { once: true }));
+    });
+    const pending = remuxToMp4(task, reporter, context);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'TASK_CANCELED' });
+    await audioStarted;
+    abortDownloadContext(context);
+    await rejected;
+    expect(mediaSignal.aborted).toBe(true);
+    expect(storage.files.size).toBe(0);
+    expect(context.input).toBeNull();
+    expect(context.audioInput).toBeNull();
+    expect(context.prefetcher).toBeNull();
+    expect(context.output).toBeNull();
+  });
 
   it.each(['cenc', 'cbcs'])('decrypts %s audio/video using the license flow and preserves every encoded packet', async (scheme) => {
     const encryptedVideo = await fixture(`${scheme}-video.mp4`);

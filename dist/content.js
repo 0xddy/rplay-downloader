@@ -53,6 +53,7 @@
     CANCEL_TASK: "CANCEL_TASK",
     OPEN_POPUP: "OPEN_POPUP",
     VIDEO_DETECTED: "VIDEO_DETECTED",
+    VIDEO_INFO_CLEARED: "VIDEO_INFO_CLEARED",
     GET_PAGE_VIDEO_TITLE: "GET_PAGE_VIDEO_TITLE",
     TASK_CREATED: "TASK_CREATED",
     TASK_UPDATED: "TASK_UPDATED",
@@ -93,12 +94,43 @@
   ]);
 
   // content.js
+  var notificationPageUrl = location.href;
+  var notifiedSourceUrls = /* @__PURE__ */ new Map();
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.type === MessageType.VIDEO_DETECTED) showVideoNotification(request.data);
+    if (request.type === MessageType.VIDEO_INFO_CLEARED) {
+      synchronizeNotificationPage();
+      document.getElementById("rplay-video-notification")?.remove();
+    }
     if (request.type === MessageType.GET_PAGE_VIDEO_TITLE) {
       sendResponse({ title: extractVideoTitle() });
     }
   });
+  function synchronizeNotificationPage() {
+    if (notificationPageUrl === location.href) return;
+    notificationPageUrl = location.href;
+    notifiedSourceUrls.clear();
+    document.getElementById("rplay-video-notification")?.remove();
+  }
+  function shouldNotifyVideo(videoData) {
+    if (!videoData || !Array.isArray(videoData.streams)) return false;
+    if (videoData.unavailableReason === "cmafNeedsPlaylist" || videoData.sourceType === "cmaf" && videoData.streams.length === 0) return false;
+    const unavailableReason = getUnavailableReason(videoData);
+    if (videoData.streams.length === 0 && !unavailableReason) return false;
+    const playableUrls = videoData.streams.filter((stream) => !stream.unavailableReason || stream.unavailableReason === "dashProtected").map((stream) => stream.url).filter(Boolean);
+    if (playableUrls.length === 0 && !unavailableReason) return false;
+    const sourceUrls = [videoData.baseUrl, ...playableUrls].filter(Boolean);
+    if (sourceUrls.length === 0) return false;
+    const notificationKind = playableUrls.length > 0 ? "playable" : unavailableReason;
+    if (!notifiedSourceUrls.has(notificationKind)) notifiedSourceUrls.set(notificationKind, /* @__PURE__ */ new Set());
+    const notifiedUrls = notifiedSourceUrls.get(notificationKind);
+    const alreadyNotified = sourceUrls.some((url) => notifiedUrls.has(url));
+    for (const url of sourceUrls) notifiedUrls.add(url);
+    return !alreadyNotified;
+  }
+  function getUnavailableReason(videoData) {
+    return videoData.unavailableReason || (videoData.streams.length > 0 && videoData.streams.every((stream) => stream.unavailableReason) ? videoData.streams[0].unavailableReason : null);
+  }
   function extractVideoTitle() {
     const currentHeading = document.querySelector("h2.font-weight-bold.text-content-primary");
     const legacyHeading = document.querySelector("h2.font-weight-bold.text-body-lg");
@@ -185,6 +217,8 @@
     (document.head || document.documentElement).appendChild(style);
   }
   function showVideoNotification(videoData) {
+    synchronizeNotificationPage();
+    if (!shouldNotifyVideo(videoData)) return;
     ensureStyles();
     document.getElementById("rplay-video-notification")?.remove();
     const notification = document.createElement("div");
@@ -202,7 +236,7 @@
     const title = document.createElement("strong");
     title.textContent = chrome.i18n.getMessage("videoDetected") || "\u68C0\u6D4B\u5230\u89C6\u9891\u8D44\u6E90";
     const detail = document.createElement("span");
-    const unavailableReason = videoData.unavailableReason || (videoData.streams.length > 0 && videoData.streams.every((stream) => stream.unavailableReason) ? videoData.streams[0].unavailableReason : null);
+    const unavailableReason = getUnavailableReason(videoData);
     detail.textContent = unavailableReason && unavailableReason !== "dashProtected" ? chrome.i18n.getMessage(unavailableReason) : chrome.i18n.getMessage("streamsFound", [String(videoData.streams.length)]) || `\u627E\u5230 ${videoData.streams.length} \u4E2A\u6E05\u6670\u5EA6\u9009\u9879`;
     copy.append(title, detail);
     notification.append(icon, copy);

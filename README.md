@@ -8,10 +8,12 @@
 ## 功能
 
 - 自动检测 RPlay 页面中的视频。
+- 刷新页面或切换视频时清空当前标签页的嗅探记录，不中断已开始的后台下载。
 - 识别 RPlay API 和 CDN（包括 `pb3.rplay.live`）上的 HLS 主清单，支持 URL 编码的 `s3key`。
 - 对单独的 CMAF 视频轨、DASH 清单和 DRM / SAMPLE-AES 受保护媒体显示具体状态。
+- 未关联清单的 CMAF 请求在当前页面合并为一条观察记录，不为每个分段新增卡片或弹出播放页通知；保留精确请求地址供清单关联，同一来源的页面通知去重。
 - 显示可用分辨率和码率，按需选择画质。
-- 支持 DASH 点播：解析 `BaseURL` / `SegmentBase` 中的完整 CMAF/MP4 视频轨，自动配对音频并保存为 MP4。Widevine 加密的分片式 MP4/CMAF 轨道可通过插件内置的软件 CDM 授权并解密。
+- 支持 DASH 点播：解析 `BaseURL` / `SegmentBase` 完整轨道，以及 `SegmentTemplate` + `SegmentTimeline` 初始化段和编号分片（含 `$Number%09d$`）。按继承的时间刻度处理音视频各自的时间线，自动配对音频并保存为 MP4。Widevine CENC / CBCS 分片通过现有软件 CDM 授权并解密。
 
 ## 安装
 
@@ -47,7 +49,7 @@
 - Chrome 116 或更高版本。
 - Edge 116 或更高版本。
 - Chromium 内核的其他浏览器可能可用，但未保证完全兼容。
-- 支持 RPlay 的 VOD/回放 HLS 视频，以及单时段、完整轨道文件形式的 DASH 点播。已验证 Widevine CENC / CBCS 分片式 MP4 音视频。
+- 支持 RPlay 的 VOD/回放 HLS，以及单时段 DASH 点播：完整 MP4/CMAF 轨道，或从零开始的连续 `SegmentTemplate` / `SegmentTimeline` 分段（独立初始化文件、有限重复次数）。音频和视频可以使用不同时间刻度、不同分段时长。动态清单、多时段、`SegmentList`、时间线间隙/重叠和非零时间偏移暂不支持。
 - MP4 主要支持 H.264 + AAC 视频。
 - 传统 MPEG-TS 视频可在符合条件时自动回退保存为 `.ts`。
 

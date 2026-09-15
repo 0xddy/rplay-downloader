@@ -34,16 +34,71 @@ export function shouldInspectMediaRequest({ url, tabId, type, method = 'GET' }) 
 }
 
 export function isKnownVideoSource(videos, url) {
-  return videos.some((video) => video.baseUrl === url || video.relatedUrls?.includes(url));
+  return videos.some((video) => video.baseUrl === url || video.relatedUrls?.includes(url)
+    || video.observedUrls?.includes(url));
+}
+
+export function isCmafTrackOnlySource(video) {
+  return video?.sourceType === 'cmaf' && Array.isArray(video.streams)
+    && video.streams.length === 0 && video.unavailableReason === 'cmafNeedsPlaylist';
+}
+
+function cmafObservationUrls(video) {
+  return [...new Set([video.baseUrl, ...(video.observedUrls || []), ...(video.relatedUrls || [])])]
+    .filter((url) => getRPlaySourceType(url) === 'cmaf');
+}
+
+function withCmafObservations(video, urls) {
+  return { ...video, baseUrl: urls[0], relatedUrls: urls, observedUrls: urls };
+}
+
+export function coalesceCmafObservations(videos) {
+  const notices = videos.filter(isCmafTrackOnlySource);
+  if (notices.length === 0) return videos;
+  const observed = [...new Set(notices.flatMap(cmafObservationUrls))];
+  if (observed.length === 0) return videos;
+  const manifests = videos.filter((video) => !isCmafTrackOnlySource(video));
+  const urls = observed.filter((url) => !isKnownVideoSource(manifests, url));
+  if (notices.length === 1 && urls.length === observed.length) return videos;
+  const representative = notices.find((video) => cmafObservationUrls(video)
+    .some((url) => !isKnownVideoSource(manifests, url)));
+  const combined = representative ? withCmafObservations(representative, urls) : null;
+  let inserted = false;
+  return videos.flatMap((video) => {
+    if (!isCmafTrackOnlySource(video)) return [video];
+    if (inserted || video !== representative || !combined) return [];
+    inserted = true;
+    return [combined];
+  });
 }
 
 export function mergeVideoSources(videos, detected) {
+  // These are grouped page observations, not proof that the requests belong
+  // to one media item. Keep every exact URL so manifests establish ownership.
+  videos = coalesceCmafObservations(videos);
+  if (isCmafTrackOnlySource(detected)) {
+    const incoming = cmafObservationUrls(detected);
+    const unknown = incoming.filter((url) => !isKnownVideoSource(videos, url));
+    if (unknown.length === 0) return videos;
+    const notice = videos.find(isCmafTrackOnlySource);
+    if (!notice) return [...videos, unknown.length === incoming.length
+      ? detected : withCmafObservations(detected, unknown)];
+    const urls = [...new Set([...cmafObservationUrls(notice), ...unknown])];
+    return videos.map((video) => video === notice ? withCmafObservations(notice, urls) : video);
+  }
   if (isKnownVideoSource(videos, detected.baseUrl)) return videos;
   const related = new Set(detected.relatedUrls || []);
   // A manifest replaces earlier track-only notices once its actual media URLs
   // are known; sharing a directory alone does not prove that two videos match.
-  return [...videos.filter((video) => !related.has(video.baseUrl)
-    && !(video.sourceType === 'cmaf' && video.relatedUrls?.some((url) => related.has(url)))), detected];
+  return [...videos.flatMap((video) => {
+    if (isCmafTrackOnlySource(video)) {
+      const observed = cmafObservationUrls(video);
+      const remaining = observed.filter((url) => !related.has(url));
+      if (remaining.length === 0) return [];
+      return [remaining.length === observed.length ? video : withCmafObservations(video, remaining)];
+    }
+    return related.has(video.baseUrl) ? [] : [video];
+  }), detected];
 }
 
 function playlistResourceUrls(content, playlistUrl) {
@@ -85,7 +140,9 @@ export async function inspectVideoSource(masterUrl, {
         // expired or the server does not permit an additional manifest fetch.
       }
     }
-    const streams = dashMetadata?.streams || [];
+    // Downloads re-read the MPD. Do not duplicate the expanded segment index
+    // (especially shared audio) into every stored quality option.
+    const streams = (dashMetadata?.streams || []).map(({ videoSegments, audioSegments, ...stream }) => stream);
     return {
       ...await metadata(),
       sourceType,

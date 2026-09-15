@@ -18973,7 +18973,7 @@
           };
         } catch (error) {
           lastError = error;
-          if (this.controller.signal.aborted || attempt === this.retries - 1) throw error;
+          if (this.controller.signal.aborted || isAbortError(error) || /^HTTP_4\d\d$/.test(error?.code || "") || attempt === this.retries - 1) throw error;
           await wait2(400 * 2 ** attempt);
         }
       }
@@ -18983,6 +18983,7 @@
       if (this.disposed) return;
       this.disposed = true;
       this.controller.abort();
+      for (const job of this.jobs.values()) job.reject(new DOMException("Aborted", "AbortError"));
       this.queue.length = 0;
       this.playlists.clear();
       this.segmentLocations.clear();
@@ -19128,6 +19129,7 @@
     CANCEL_TASK: "CANCEL_TASK",
     OPEN_POPUP: "OPEN_POPUP",
     VIDEO_DETECTED: "VIDEO_DETECTED",
+    VIDEO_INFO_CLEARED: "VIDEO_INFO_CLEARED",
     GET_PAGE_VIDEO_TITLE: "GET_PAGE_VIDEO_TITLE",
     TASK_CREATED: "TASK_CREATED",
     TASK_UPDATED: "TASK_UPDATED",
@@ -23095,8 +23097,103 @@
     }
   };
 
+  // src/dash-segments.js
+  var MAX_TRACK_SEGMENTS = 1e4;
+  var MAX_TEMPLATE_PADDING = 16;
+  var MAX_URL_CHARACTERS = 8192;
+  var DEFAULT_URL_CHARACTER_LIMIT = 4 * 1024 * 1024;
+  function unsignedInteger(value, fallback = null) {
+    if (value === void 0) return fallback;
+    if (typeof value !== "string" || !/^\d+$/.test(value.trim())) return null;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  }
+  function templateUrl(template, base, values) {
+    if (typeof template !== "string" || !template.trim()) return null;
+    let result = "";
+    let cursor = 0;
+    while (cursor < template.length) {
+      const opening = template.indexOf("$", cursor);
+      if (opening < 0) {
+        result += template.slice(cursor);
+        break;
+      }
+      result += template.slice(cursor, opening);
+      if (template[opening + 1] === "$") {
+        result += "$";
+        cursor = opening + 2;
+        continue;
+      }
+      const closing = template.indexOf("$", opening + 1);
+      if (closing < 0) return null;
+      const token = template.slice(opening + 1, closing);
+      const match = /^(RepresentationID|Number|Bandwidth|Time)(?:%0([1-9]\d?)d)?$/.exec(token);
+      if (!match || match[1] === "RepresentationID" && match[2]) return null;
+      const value = values[match[1]];
+      const padding = Number(match[2] || 0);
+      if (value === null || value === void 0 || padding > MAX_TEMPLATE_PADDING) return null;
+      if (match[1] !== "RepresentationID" && (!Number.isSafeInteger(value) || value < 0)) return null;
+      result += String(value).padStart(padding, "0");
+      cursor = closing + 1;
+    }
+    if (result.length > MAX_URL_CHARACTERS) return null;
+    try {
+      const url2 = new URL(result.trim(), base);
+      return ["http:", "https:"].includes(url2.protocol) && url2.href.length <= MAX_URL_CHARACTERS ? url2.href : null;
+    } catch {
+      return null;
+    }
+  }
+  function expandDashSegmentTemplate(template, base, representation, segmentLimit = MAX_TRACK_SEGMENTS, urlCharacterLimit = DEFAULT_URL_CHARACTER_LIMIT) {
+    if (!template || typeof template !== "object" || Array.isArray(template)) return null;
+    const timescale = unsignedInteger(template["@_timescale"], 1);
+    const startNumber = unsignedInteger(template["@_startNumber"], 1);
+    const offset = unsignedInteger(template["@_presentationTimeOffset"], 0);
+    const timeline = template.SegmentTimeline;
+    if (!timescale || startNumber === null || offset !== 0 || !timeline || typeof timeline !== "object" || Array.isArray(timeline)) return null;
+    const entries = Array.isArray(timeline.S) ? timeline.S : timeline.S ? [timeline.S] : [];
+    if (entries.length === 0 || entries.length > MAX_TRACK_SEGMENTS) return null;
+    const values = {
+      RepresentationID: representation.id,
+      Bandwidth: representation.bandwidth,
+      Number: startNumber,
+      Time: 0
+    };
+    const initializationUrl = templateUrl(template["@_initialization"], base, values);
+    if (!initializationUrl || initializationUrl.length > urlCharacterLimit) return null;
+    let urlCharacters = initializationUrl.length;
+    const segments = [];
+    const segmentUrls = /* @__PURE__ */ new Set();
+    let nextTimestamp = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+      const duration = unsignedInteger(entry["@_d"]);
+      const timestamp = unsignedInteger(entry["@_t"], nextTimestamp);
+      const repeat = unsignedInteger(entry["@_r"], 0);
+      if (!duration || timestamp !== nextTimestamp || repeat === null || repeat >= MAX_TRACK_SEGMENTS || segments.length + repeat + 1 > Math.min(MAX_TRACK_SEGMENTS, segmentLimit)) return null;
+      const end = timestamp + duration * (repeat + 1);
+      if (!Number.isSafeInteger(end) || !Number.isSafeInteger(startNumber + segments.length + repeat)) return null;
+      for (let index = 0; index <= repeat; index += 1) {
+        const time = timestamp + duration * index;
+        const url2 = templateUrl(template["@_media"], base, {
+          ...values,
+          Number: startNumber + segments.length,
+          Time: time
+        });
+        if (!url2 || segmentUrls.has(url2) || urlCharacters + url2.length > urlCharacterLimit) return null;
+        urlCharacters += url2.length;
+        segmentUrls.add(url2);
+        segments.push({ url: url2, duration: duration / timescale, timestamp: time / timescale });
+      }
+      nextTimestamp = end;
+    }
+    return { initializationUrl, segments, timescale };
+  }
+
   // src/dash-metadata.js
   var MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+  var MAX_MANIFEST_SEGMENTS = 2e4;
+  var MAX_EXPANDED_URL_CHARACTERS = 4 * 1024 * 1024;
   var parser = new XMLParser({
     ignoreAttributes: false,
     removeNSPrefix: true,
@@ -23127,6 +23224,11 @@
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : null;
   }
+  function representationUrl(manifestUrl, id) {
+    const url2 = new URL(manifestUrl);
+    url2.hash = `representation=${encodeURIComponent(id)}`;
+    return url2.href;
+  }
   function mediaType(attributes, bases) {
     const declared = attributes.contentType || attributes.mimeType?.split("/")[0];
     if (declared === "video" || declared === "audio") return declared;
@@ -23146,6 +23248,8 @@
     }
     const relatedUrls = /* @__PURE__ */ new Set([manifestUrl]);
     const representations = [];
+    let expandedSegmentCount = 0;
+    let expandedUrlCharacters = 0;
     let hasContentProtection = false;
     const periods = asArray(document2.MPD.Period);
     const presentationUnsupported = document2.MPD["@_type"] === "dynamic" || periods.length !== 1 || Boolean(durationSeconds(periods[0]?.["@_start"]));
@@ -23164,6 +23268,10 @@
       const ownSegmentMode = ["SegmentBase", "SegmentList", "SegmentTemplate"].find((name) => Object.hasOwn(node, name));
       const segmentMode = ownSegmentMode || inherited.segmentMode;
       const segmentBase = ownSegmentMode === "SegmentBase" ? { ...inherited.segmentBase, ...node.SegmentBase } : inherited.segmentBase;
+      const segmentTemplate = ownSegmentMode === "SegmentTemplate" ? Array.isArray(node.SegmentTemplate) ? null : {
+        ...inherited.segmentMode === "SegmentTemplate" ? inherited.segmentTemplate : {},
+        ...node.SegmentTemplate
+      } : inherited.segmentTemplate;
       const hasBase = Boolean(inherited.hasBase || declaredBases.length);
       const main = inherited.main || asArray(node.Role).some((role) => role?.["@_value"] === "main");
       for (const base of bases) {
@@ -23186,7 +23294,27 @@
       if (tag === "Representation") {
         const type = mediaType(attributes, bases);
         if (type) {
-          const url2 = hasBase ? bases.find((base) => {
+          const id = String(node["@_id"] ?? representations.length);
+          const templates = [];
+          if (!presentationUnsupported && segmentMode === "SegmentTemplate") {
+            const segmentLimit = Math.floor((MAX_MANIFEST_SEGMENTS - expandedSegmentCount) / (bases.length || 1));
+            const characterLimit = Math.floor((MAX_EXPANDED_URL_CHARACTERS - expandedUrlCharacters) / (bases.length || 1));
+            for (const base of bases) {
+              const expanded = expandDashSegmentTemplate(segmentTemplate, base, {
+                id,
+                bandwidth: positiveNumber(attributes.bandwidth)
+              }, segmentLimit, characterLimit);
+              if (expanded) templates.push(expanded);
+            }
+            expandedSegmentCount += templates.reduce((total, item) => total + item.segments.length, 0);
+            expandedUrlCharacters += templates.reduce((total, item) => total + item.initializationUrl.length + item.segments.reduce((sum, segment) => sum + segment.url.length, 0), 0);
+          }
+          const segments = templates[0] || null;
+          for (const template of templates) {
+            relatedUrls.add(template.initializationUrl);
+            for (const segment of template.segments) relatedUrls.add(segment.url);
+          }
+          const url2 = segments ? representationUrl(manifestUrl, id) : hasBase ? bases.find((base) => {
             const path = new URL(base).pathname;
             return !path.endsWith("/") && (/\.(?:cmfv|cmfa|mp4|m4a|m4v)$/i.test(path) || segmentMode === "SegmentBase" && attributes.mimeType?.endsWith("/mp4"));
           }) : null;
@@ -23194,9 +23322,10 @@
           const externalInit = initialization?.["@_sourceURL"] && resolveHttpUrl(initialization["@_sourceURL"], url2 || manifestUrl) !== url2;
           const timeOffset = Number(segmentBase?.["@_presentationTimeOffset"] || 0);
           representations.push({
-            id: String(node["@_id"] ?? representations.length),
+            id,
             type,
             url: url2 || null,
+            segments,
             width: positiveNumber(attributes.width),
             height: positiveNumber(attributes.height),
             bandwidth: positiveNumber(attributes.bandwidth),
@@ -23204,13 +23333,13 @@
             language: attributes.lang || null,
             main,
             hasContentProtection: Boolean(protection),
-            unavailableReason: presentationUnsupported || !url2 || externalInit || timeOffset !== 0 || segmentMode && segmentMode !== "SegmentBase" ? "dashLayoutUnsupported" : null
+            unavailableReason: segments ? null : presentationUnsupported || !url2 || externalInit || timeOffset !== 0 || segmentMode && segmentMode !== "SegmentBase" ? "dashLayoutUnsupported" : null
           });
         }
       }
       for (const key of ["Period", "AdaptationSet", "Representation"]) {
         for (const child of asArray(node[key])) {
-          visit(child, bases, { attributes, protection, segmentMode, segmentBase, hasBase, main }, key);
+          visit(child, bases, { attributes, protection, segmentMode, segmentBase, segmentTemplate, hasBase, main }, key);
         }
       }
     }
@@ -23219,17 +23348,19 @@
     const preferredAudio = [...audioTracks].sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || Number(left.hasContentProtection) - Number(right.hasContentProtection) || Number(Boolean(right.main)) - Number(Boolean(left.main)) || (right.bandwidth || 0) - (left.bandwidth || 0))[0] || null;
     const streams = representations.filter((track) => track.type === "video").map((track) => ({
       // Unsupported layouts still need a stable selection identity in the UI.
-      url: track.url || `${manifestUrl}#representation=${encodeURIComponent(track.id)}`,
+      url: track.url || representationUrl(manifestUrl, track.id),
       representationId: track.id,
       resolution: track.width && track.height ? `${track.width}x${track.height}` : null,
       width: track.width,
       height: track.height,
       bandwidth: (track.bandwidth || 0) + (preferredAudio?.bandwidth || 0) || null,
       codecs: track.codecs,
+      videoSegments: track.segments,
       hasExternalAudio: audioTracks.length > 0,
       audioUrl: preferredAudio?.url || null,
       audioRepresentationId: preferredAudio?.id || null,
       audioLanguage: preferredAudio?.language || null,
+      audioSegments: preferredAudio?.segments || null,
       hasContentProtection: track.hasContentProtection || Boolean(preferredAudio?.hasContentProtection),
       unavailableReason: track.unavailableReason || preferredAudio?.unavailableReason || null
     }));
@@ -23266,35 +23397,128 @@
   }
 
   // src/dash-input.js
+  var VIRTUAL_ORIGIN = "https://rplay-downloader.invalid";
+  function segmentedPlaylist(description) {
+    const quote = (url2) => {
+      if (/[\r\n"]/.test(url2)) throw new SourceError("DASH \u5206\u7247\u5730\u5740\u65E0\u6548", "DASH_UNSUPPORTED");
+      return url2;
+    };
+    return `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-TARGETDURATION:${Math.ceil(Math.max(...description.segments.map((segment) => segment.duration)))}
+#EXT-X-MAP:URI="${quote(description.initializationUrl)}"
+` + description.segments.map((segment) => `#EXTINF:${segment.duration},
+${quote(segment.url)}
+`).join("") + "#EXT-X-ENDLIST\n";
+  }
+  function virtualPlaylistFetch(playlists, fetchFn) {
+    return async (input, init = {}) => {
+      const url2 = input instanceof Request ? input.url : String(input);
+      const playlist = playlists.get(url2);
+      if (playlist !== void 0) {
+        if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const response = new Response(playlist, { headers: { "Content-Type": "application/vnd.apple.mpegurl" } });
+        Object.defineProperty(response, "url", { value: url2 });
+        return response;
+      }
+      if (new URL(url2).origin === VIRTUAL_ORIGIN) {
+        throw new SourceError("DASH \u5185\u90E8\u5206\u7247\u7D22\u5F15\u65E0\u6548", "DASH_UNSUPPORTED");
+      }
+      return fetchFn(input, init);
+    };
+  }
   async function openDashInputs(task, fetchFn, context) {
     const metadata = await inspectDashManifest(task.masterUrl, fetchFn);
     const stream = metadata.streams.find((candidate) => candidate.url === task.streamUrl && (!task.representationId || candidate.representationId === task.representationId));
     if (!stream) throw new SourceError("\u6240\u9009 DASH \u753B\u8D28\u5DF2\u5931\u6548\uFF0C\u8BF7\u5237\u65B0\u89C6\u9891\u9875\u9762\u540E\u91CD\u65B0\u9009\u62E9", "DASH_SELECTION_CHANGED");
     if (stream.unavailableReason) {
-      throw new SourceError("\u5F53\u524D\u4EC5\u652F\u6301\u5355\u65F6\u6BB5 VOD \u7684\u5B8C\u6574 MP4/CMAF \u8F68\u9053\uFF0C\u4E0D\u652F\u6301\u6B64 DASH \u5206\u6BB5\u5E03\u5C40", "DASH_UNSUPPORTED");
+      throw new SourceError("\u5F53\u524D\u652F\u6301\u5355\u65F6\u6BB5 VOD \u7684\u5B8C\u6574 MP4/CMAF \u8F68\u9053\u6216\u8FDE\u7EED SegmentTemplate/SegmentTimeline \u5206\u6BB5\uFF0C\u4E0D\u652F\u6301\u6B64 DASH \u5E03\u5C40", "DASH_UNSUPPORTED");
     }
-    if ((stream.audioUrl || null) !== (task.audioUrl || null)) {
+    if ((stream.audioUrl || null) !== (task.audioUrl || null) || task.audioRepresentationId && stream.audioRepresentationId !== task.audioRepresentationId) {
       throw new SourceError("DASH \u97F3\u8F68\u5DF2\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u5237\u65B0\u89C6\u9891\u9875\u9762\u540E\u91CD\u65B0\u9009\u62E9", "DASH_SELECTION_CHANGED");
     }
-    const createInput = (url2) => new Input({
-      formats: [MP4],
+    const playlists = /* @__PURE__ */ new Map();
+    const playlistUrl = (type) => `${VIRTUAL_ORIGIN}/${encodeURIComponent(task.taskId)}/${type}.m3u8`;
+    if (stream.videoSegments) playlists.set(playlistUrl("video"), segmentedPlaylist(stream.videoSegments));
+    if (stream.audioSegments) playlists.set(playlistUrl("audio"), segmentedPlaylist(stream.audioSegments));
+    let mediaFetch = fetchFn;
+    if (playlists.size) {
+      const prefetcher = new HlsSegmentPrefetcher(virtualPlaylistFetch(playlists, fetchFn), {
+        concurrency: FETCH_PARALLELISM,
+        windowSize: FETCH_PARALLELISM + 1,
+        maxBufferedBytes: PREFETCH_MAX_BYTES
+      });
+      context.prefetcher = prefetcher;
+      await prefetcher.prepare([...playlists.keys()]);
+      mediaFetch = prefetcher.fetch;
+    }
+    const createInput = (url2, segmented = false, initInput, inputFetch = mediaFetch) => new Input({
+      formats: segmented ? HLS_FORMATS : [MP4],
+      initInput,
       source: new UrlSource(url2, {
         requestInit: { credentials: "include" },
         parallelism: FETCH_PARALLELISM,
         maxCacheSize: SOURCE_CACHE_SIZE,
-        fetchFn,
+        fetchFn: inputFetch,
         getRetryDelay: (attempts, error) => {
           if (isAbortError(error) || /^HTTP_4\d\d$/.test(error?.code || "")) return null;
           return attempts < 2 ? 0.5 * 2 ** attempts : null;
         }
       }),
-      formatOptions: { isobmff: {
+      formatOptions: { hls: { offsetTimestampsByDateTime: false }, isobmff: {
         resolveKeyId: context.resolveMediaKey
       } }
     });
-    context.input = createInput(stream.url);
-    if (stream.audioUrl && stream.audioUrl !== stream.url) context.audioInput = createInput(stream.audioUrl);
-    return { input: context.input, audioInput: context.audioInput || null, duration: metadata.duration };
+    const timestampProbes = /* @__PURE__ */ new Set();
+    const probeController = new AbortController();
+    const probeFetch = (input, init = {}) => mediaFetch(input, {
+      ...init,
+      signal: combineSignals(probeController.signal, init.signal)
+    });
+    const originalTimestampOffset = async (description) => {
+      if (!description) return 0;
+      const initialization = createInput(description.initializationUrl, false, void 0, probeFetch);
+      timestampProbes.add(initialization);
+      let firstSegment;
+      try {
+        firstSegment = createInput(description.segments[0].url, false, initialization, probeFetch);
+        timestampProbes.add(firstSegment);
+        const timestamp = await firstSegment.getFirstTimestamp();
+        if (!Number.isFinite(timestamp)) throw new SourceError("DASH \u9996\u5206\u7247\u6CA1\u6709\u53EF\u7528\u8F68\u9053\u65F6\u95F4\u6233", "EMPTY_MEDIA_TRACK");
+        return timestamp;
+      } finally {
+        firstSegment?.dispose();
+        initialization.dispose();
+        timestampProbes.delete(firstSegment);
+        timestampProbes.delete(initialization);
+      }
+    };
+    let videoTimestampOffset;
+    let audioTimestampOffset;
+    try {
+      [videoTimestampOffset, audioTimestampOffset] = await Promise.all([
+        originalTimestampOffset(stream.videoSegments),
+        originalTimestampOffset(stream.audioSegments)
+      ]);
+    } catch (error) {
+      probeController.abort();
+      for (const probe of timestampProbes) probe.dispose();
+      throw error;
+    } finally {
+      probeController.abort();
+    }
+    context.input = createInput(stream.videoSegments ? playlistUrl("video") : stream.url, Boolean(stream.videoSegments));
+    if (stream.audioUrl && stream.audioUrl !== stream.url) {
+      context.audioInput = createInput(stream.audioSegments ? playlistUrl("audio") : stream.audioUrl, Boolean(stream.audioSegments));
+    }
+    return {
+      input: context.input,
+      audioInput: context.audioInput || null,
+      duration: metadata.duration,
+      videoTimestampOffset,
+      audioTimestampOffset
+    };
   }
 
   // src/mp4-remux.js
@@ -23347,10 +23571,10 @@
     while (states.some((state) => !state.next.done)) {
       if (context.controller.signal.aborted) throw new TaskCanceledError();
       const available = states.filter((state2) => !state2.next.done);
-      available.sort((left, right) => left.next.value.timestamp - right.next.value.timestamp);
+      available.sort((left, right) => left.next.value.timestamp + (left.timestampOffset || 0) - (right.next.value.timestamp + (right.timestampOffset || 0)));
       const state = available[0];
       const packet = state.next.value;
-      const normalized = packet.clone({ timestamp: packet.timestamp - baseTimestamp });
+      const normalized = packet.clone({ timestamp: packet.timestamp + (state.timestampOffset || 0) - baseTimestamp });
       await state.source.add(normalized, { decoderConfig: state.decoderConfig });
       reporter.notePacket(normalized.timestamp + normalized.duration, duration);
       state.next = await state.iterator.next();
@@ -23367,12 +23591,16 @@
     let input = null;
     let audioInput = null;
     let sourceDuration = task.duration || null;
+    let videoTimestampOffset = 0;
+    let audioTimestampOffset = 0;
     try {
       if (task.sourceType === "dash") {
         const dash = await openDashInputs(task, trackedFetch, context);
         input = dash.input;
         audioInput = dash.audioInput;
         sourceDuration = dash.duration || sourceDuration;
+        videoTimestampOffset = dash.videoTimestampOffset || 0;
+        audioTimestampOffset = dash.audioTimestampOffset || 0;
       } else {
         prefetcher = new HlsSegmentPrefetcher(trackedFetch, {
           concurrency: FETCH_PARALLELISM,
@@ -23400,6 +23628,8 @@
         const audioTracks = await audioInput.getAudioTracks();
         if (audioTracks.length !== 1) throw new SourceError("\u6240\u9009 DASH \u97F3\u8F68\u672A\u5305\u542B\u552F\u4E00\u97F3\u9891\u8F68\u9053", "INVALID_AUDIO_TRACK");
         [audioTrack] = audioTracks;
+      } else {
+        audioTimestampOffset = videoTimestampOffset;
       }
       if (await videoTrack.isLive()) {
         throw new SourceError("\u5F53\u524D\u7248\u672C\u53EA\u652F\u6301 VOD/\u56DE\u653E\uFF0C\u4E0D\u652F\u6301\u6301\u7EED\u76F4\u64AD\u5F55\u5236", "LIVE_UNSUPPORTED");
@@ -23428,8 +23658,8 @@
       if (audioTrack && audioFirst && !audioConfig) {
         throw new RemuxCompatibilityError("\u65E0\u6CD5\u83B7\u53D6\u97F3\u9891\u8F68\u9053\u521D\u59CB\u5316\u53C2\u6570");
       }
-      const firstTimestamps = [videoFirst.timestamp];
-      if (audioFirst) firstTimestamps.push(audioFirst.timestamp);
+      const firstTimestamps = [videoFirst.timestamp + videoTimestampOffset];
+      if (audioFirst) firstTimestamps.push(audioFirst.timestamp + audioTimestampOffset);
       const baseTimestamp = Math.min(...firstTimestamps);
       let duration = sourceDuration;
       if (!duration) {
@@ -23471,14 +23701,16 @@
           source: videoSource,
           firstPacket: videoFirst,
           decoderConfig: videoConfig,
-          verifyKeyPackets: true
+          verifyKeyPackets: true,
+          timestampOffset: videoTimestampOffset
         },
         ...audioSource ? [{
           sink: audioSink,
           source: audioSource,
           firstPacket: audioFirst,
           decoderConfig: audioConfig,
-          verifyKeyPackets: false
+          verifyKeyPackets: false,
+          timestampOffset: audioTimestampOffset
         }] : []
       ], baseTimestamp, duration, reporter, context);
       await output.finalize();
@@ -23501,6 +23733,7 @@
       if (context.input !== input) context.input?.dispose();
       if (context.audioInput !== audioInput) context.audioInput?.dispose();
       prefetcher?.dispose();
+      if (context.prefetcher !== prefetcher) context.prefetcher?.dispose();
       context.input = null;
       context.audioInput = null;
       context.prefetcher = null;

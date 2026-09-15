@@ -109,6 +109,7 @@ ${streamUrl || ""}`;
     CANCEL_TASK: "CANCEL_TASK",
     OPEN_POPUP: "OPEN_POPUP",
     VIDEO_DETECTED: "VIDEO_DETECTED",
+    VIDEO_INFO_CLEARED: "VIDEO_INFO_CLEARED",
     GET_PAGE_VIDEO_TITLE: "GET_PAGE_VIDEO_TITLE",
     TASK_CREATED: "TASK_CREATED",
     TASK_UPDATED: "TASK_UPDATED",
@@ -4267,8 +4268,103 @@ ${streamUrl || ""}`;
     }
   };
 
+  // src/dash-segments.js
+  var MAX_TRACK_SEGMENTS = 1e4;
+  var MAX_TEMPLATE_PADDING = 16;
+  var MAX_URL_CHARACTERS = 8192;
+  var DEFAULT_URL_CHARACTER_LIMIT = 4 * 1024 * 1024;
+  function unsignedInteger(value, fallback = null) {
+    if (value === void 0) return fallback;
+    if (typeof value !== "string" || !/^\d+$/.test(value.trim())) return null;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  }
+  function templateUrl(template, base, values) {
+    if (typeof template !== "string" || !template.trim()) return null;
+    let result = "";
+    let cursor = 0;
+    while (cursor < template.length) {
+      const opening = template.indexOf("$", cursor);
+      if (opening < 0) {
+        result += template.slice(cursor);
+        break;
+      }
+      result += template.slice(cursor, opening);
+      if (template[opening + 1] === "$") {
+        result += "$";
+        cursor = opening + 2;
+        continue;
+      }
+      const closing = template.indexOf("$", opening + 1);
+      if (closing < 0) return null;
+      const token = template.slice(opening + 1, closing);
+      const match = /^(RepresentationID|Number|Bandwidth|Time)(?:%0([1-9]\d?)d)?$/.exec(token);
+      if (!match || match[1] === "RepresentationID" && match[2]) return null;
+      const value = values[match[1]];
+      const padding = Number(match[2] || 0);
+      if (value === null || value === void 0 || padding > MAX_TEMPLATE_PADDING) return null;
+      if (match[1] !== "RepresentationID" && (!Number.isSafeInteger(value) || value < 0)) return null;
+      result += String(value).padStart(padding, "0");
+      cursor = closing + 1;
+    }
+    if (result.length > MAX_URL_CHARACTERS) return null;
+    try {
+      const url = new URL(result.trim(), base);
+      return ["http:", "https:"].includes(url.protocol) && url.href.length <= MAX_URL_CHARACTERS ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+  function expandDashSegmentTemplate(template, base, representation, segmentLimit = MAX_TRACK_SEGMENTS, urlCharacterLimit = DEFAULT_URL_CHARACTER_LIMIT) {
+    if (!template || typeof template !== "object" || Array.isArray(template)) return null;
+    const timescale = unsignedInteger(template["@_timescale"], 1);
+    const startNumber = unsignedInteger(template["@_startNumber"], 1);
+    const offset = unsignedInteger(template["@_presentationTimeOffset"], 0);
+    const timeline = template.SegmentTimeline;
+    if (!timescale || startNumber === null || offset !== 0 || !timeline || typeof timeline !== "object" || Array.isArray(timeline)) return null;
+    const entries = Array.isArray(timeline.S) ? timeline.S : timeline.S ? [timeline.S] : [];
+    if (entries.length === 0 || entries.length > MAX_TRACK_SEGMENTS) return null;
+    const values = {
+      RepresentationID: representation.id,
+      Bandwidth: representation.bandwidth,
+      Number: startNumber,
+      Time: 0
+    };
+    const initializationUrl = templateUrl(template["@_initialization"], base, values);
+    if (!initializationUrl || initializationUrl.length > urlCharacterLimit) return null;
+    let urlCharacters = initializationUrl.length;
+    const segments = [];
+    const segmentUrls = /* @__PURE__ */ new Set();
+    let nextTimestamp = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+      const duration = unsignedInteger(entry["@_d"]);
+      const timestamp = unsignedInteger(entry["@_t"], nextTimestamp);
+      const repeat = unsignedInteger(entry["@_r"], 0);
+      if (!duration || timestamp !== nextTimestamp || repeat === null || repeat >= MAX_TRACK_SEGMENTS || segments.length + repeat + 1 > Math.min(MAX_TRACK_SEGMENTS, segmentLimit)) return null;
+      const end = timestamp + duration * (repeat + 1);
+      if (!Number.isSafeInteger(end) || !Number.isSafeInteger(startNumber + segments.length + repeat)) return null;
+      for (let index = 0; index <= repeat; index += 1) {
+        const time = timestamp + duration * index;
+        const url = templateUrl(template["@_media"], base, {
+          ...values,
+          Number: startNumber + segments.length,
+          Time: time
+        });
+        if (!url || segmentUrls.has(url) || urlCharacters + url.length > urlCharacterLimit) return null;
+        urlCharacters += url.length;
+        segmentUrls.add(url);
+        segments.push({ url, duration: duration / timescale, timestamp: time / timescale });
+      }
+      nextTimestamp = end;
+    }
+    return { initializationUrl, segments, timescale };
+  }
+
   // src/dash-metadata.js
   var MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+  var MAX_MANIFEST_SEGMENTS = 2e4;
+  var MAX_EXPANDED_URL_CHARACTERS = 4 * 1024 * 1024;
   var parser = new XMLParser({
     ignoreAttributes: false,
     removeNSPrefix: true,
@@ -4299,6 +4395,11 @@ ${streamUrl || ""}`;
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : null;
   }
+  function representationUrl(manifestUrl, id) {
+    const url = new URL(manifestUrl);
+    url.hash = `representation=${encodeURIComponent(id)}`;
+    return url.href;
+  }
   function mediaType(attributes, bases) {
     const declared = attributes.contentType || attributes.mimeType?.split("/")[0];
     if (declared === "video" || declared === "audio") return declared;
@@ -4318,6 +4419,8 @@ ${streamUrl || ""}`;
     }
     const relatedUrls = /* @__PURE__ */ new Set([manifestUrl]);
     const representations = [];
+    let expandedSegmentCount = 0;
+    let expandedUrlCharacters = 0;
     let hasContentProtection = false;
     const periods = asArray(document.MPD.Period);
     const presentationUnsupported = document.MPD["@_type"] === "dynamic" || periods.length !== 1 || Boolean(durationSeconds(periods[0]?.["@_start"]));
@@ -4336,6 +4439,10 @@ ${streamUrl || ""}`;
       const ownSegmentMode = ["SegmentBase", "SegmentList", "SegmentTemplate"].find((name) => Object.hasOwn(node, name));
       const segmentMode = ownSegmentMode || inherited.segmentMode;
       const segmentBase = ownSegmentMode === "SegmentBase" ? { ...inherited.segmentBase, ...node.SegmentBase } : inherited.segmentBase;
+      const segmentTemplate = ownSegmentMode === "SegmentTemplate" ? Array.isArray(node.SegmentTemplate) ? null : {
+        ...inherited.segmentMode === "SegmentTemplate" ? inherited.segmentTemplate : {},
+        ...node.SegmentTemplate
+      } : inherited.segmentTemplate;
       const hasBase = Boolean(inherited.hasBase || declaredBases.length);
       const main = inherited.main || asArray(node.Role).some((role) => role?.["@_value"] === "main");
       for (const base of bases) {
@@ -4358,7 +4465,27 @@ ${streamUrl || ""}`;
       if (tag === "Representation") {
         const type = mediaType(attributes, bases);
         if (type) {
-          const url = hasBase ? bases.find((base) => {
+          const id = String(node["@_id"] ?? representations.length);
+          const templates = [];
+          if (!presentationUnsupported && segmentMode === "SegmentTemplate") {
+            const segmentLimit = Math.floor((MAX_MANIFEST_SEGMENTS - expandedSegmentCount) / (bases.length || 1));
+            const characterLimit = Math.floor((MAX_EXPANDED_URL_CHARACTERS - expandedUrlCharacters) / (bases.length || 1));
+            for (const base of bases) {
+              const expanded = expandDashSegmentTemplate(segmentTemplate, base, {
+                id,
+                bandwidth: positiveNumber(attributes.bandwidth)
+              }, segmentLimit, characterLimit);
+              if (expanded) templates.push(expanded);
+            }
+            expandedSegmentCount += templates.reduce((total, item) => total + item.segments.length, 0);
+            expandedUrlCharacters += templates.reduce((total, item) => total + item.initializationUrl.length + item.segments.reduce((sum, segment) => sum + segment.url.length, 0), 0);
+          }
+          const segments = templates[0] || null;
+          for (const template of templates) {
+            relatedUrls.add(template.initializationUrl);
+            for (const segment of template.segments) relatedUrls.add(segment.url);
+          }
+          const url = segments ? representationUrl(manifestUrl, id) : hasBase ? bases.find((base) => {
             const path = new URL(base).pathname;
             return !path.endsWith("/") && (/\.(?:cmfv|cmfa|mp4|m4a|m4v)$/i.test(path) || segmentMode === "SegmentBase" && attributes.mimeType?.endsWith("/mp4"));
           }) : null;
@@ -4366,9 +4493,10 @@ ${streamUrl || ""}`;
           const externalInit = initialization?.["@_sourceURL"] && resolveHttpUrl(initialization["@_sourceURL"], url || manifestUrl) !== url;
           const timeOffset = Number(segmentBase?.["@_presentationTimeOffset"] || 0);
           representations.push({
-            id: String(node["@_id"] ?? representations.length),
+            id,
             type,
             url: url || null,
+            segments,
             width: positiveNumber(attributes.width),
             height: positiveNumber(attributes.height),
             bandwidth: positiveNumber(attributes.bandwidth),
@@ -4376,13 +4504,13 @@ ${streamUrl || ""}`;
             language: attributes.lang || null,
             main,
             hasContentProtection: Boolean(protection),
-            unavailableReason: presentationUnsupported || !url || externalInit || timeOffset !== 0 || segmentMode && segmentMode !== "SegmentBase" ? "dashLayoutUnsupported" : null
+            unavailableReason: segments ? null : presentationUnsupported || !url || externalInit || timeOffset !== 0 || segmentMode && segmentMode !== "SegmentBase" ? "dashLayoutUnsupported" : null
           });
         }
       }
       for (const key of ["Period", "AdaptationSet", "Representation"]) {
         for (const child of asArray(node[key])) {
-          visit(child, bases, { attributes, protection, segmentMode, segmentBase, hasBase, main }, key);
+          visit(child, bases, { attributes, protection, segmentMode, segmentBase, segmentTemplate, hasBase, main }, key);
         }
       }
     }
@@ -4391,17 +4519,19 @@ ${streamUrl || ""}`;
     const preferredAudio = [...audioTracks].sort((left, right) => Number(Boolean(left.unavailableReason)) - Number(Boolean(right.unavailableReason)) || Number(left.hasContentProtection) - Number(right.hasContentProtection) || Number(Boolean(right.main)) - Number(Boolean(left.main)) || (right.bandwidth || 0) - (left.bandwidth || 0))[0] || null;
     const streams = representations.filter((track) => track.type === "video").map((track) => ({
       // Unsupported layouts still need a stable selection identity in the UI.
-      url: track.url || `${manifestUrl}#representation=${encodeURIComponent(track.id)}`,
+      url: track.url || representationUrl(manifestUrl, track.id),
       representationId: track.id,
       resolution: track.width && track.height ? `${track.width}x${track.height}` : null,
       width: track.width,
       height: track.height,
       bandwidth: (track.bandwidth || 0) + (preferredAudio?.bandwidth || 0) || null,
       codecs: track.codecs,
+      videoSegments: track.segments,
       hasExternalAudio: audioTracks.length > 0,
       audioUrl: preferredAudio?.url || null,
       audioRepresentationId: preferredAudio?.id || null,
       audioLanguage: preferredAudio?.language || null,
+      audioSegments: preferredAudio?.segments || null,
       hasContentProtection: track.hasContentProtection || Boolean(preferredAudio?.hasContentProtection),
       unavailableReason: track.unavailableReason || preferredAudio?.unavailableReason || null
     }));
@@ -4457,12 +4587,57 @@ ${streamUrl || ""}`;
     return Number.isInteger(tabId) && tabId >= 0 && method === "GET" && ["xmlhttprequest", "media", "other"].includes(type) && getRPlaySourceType(url) !== null;
   }
   function isKnownVideoSource(videos, url) {
-    return videos.some((video) => video.baseUrl === url || video.relatedUrls?.includes(url));
+    return videos.some((video) => video.baseUrl === url || video.relatedUrls?.includes(url) || video.observedUrls?.includes(url));
+  }
+  function isCmafTrackOnlySource(video) {
+    return video?.sourceType === "cmaf" && Array.isArray(video.streams) && video.streams.length === 0 && video.unavailableReason === "cmafNeedsPlaylist";
+  }
+  function cmafObservationUrls(video) {
+    return [.../* @__PURE__ */ new Set([video.baseUrl, ...video.observedUrls || [], ...video.relatedUrls || []])].filter((url) => getRPlaySourceType(url) === "cmaf");
+  }
+  function withCmafObservations(video, urls) {
+    return { ...video, baseUrl: urls[0], relatedUrls: urls, observedUrls: urls };
+  }
+  function coalesceCmafObservations(videos) {
+    const notices = videos.filter(isCmafTrackOnlySource);
+    if (notices.length === 0) return videos;
+    const observed = [...new Set(notices.flatMap(cmafObservationUrls))];
+    if (observed.length === 0) return videos;
+    const manifests = videos.filter((video) => !isCmafTrackOnlySource(video));
+    const urls = observed.filter((url) => !isKnownVideoSource(manifests, url));
+    if (notices.length === 1 && urls.length === observed.length) return videos;
+    const representative = notices.find((video) => cmafObservationUrls(video).some((url) => !isKnownVideoSource(manifests, url)));
+    const combined = representative ? withCmafObservations(representative, urls) : null;
+    let inserted = false;
+    return videos.flatMap((video) => {
+      if (!isCmafTrackOnlySource(video)) return [video];
+      if (inserted || video !== representative || !combined) return [];
+      inserted = true;
+      return [combined];
+    });
   }
   function mergeVideoSources(videos, detected) {
+    videos = coalesceCmafObservations(videos);
+    if (isCmafTrackOnlySource(detected)) {
+      const incoming = cmafObservationUrls(detected);
+      const unknown = incoming.filter((url) => !isKnownVideoSource(videos, url));
+      if (unknown.length === 0) return videos;
+      const notice = videos.find(isCmafTrackOnlySource);
+      if (!notice) return [...videos, unknown.length === incoming.length ? detected : withCmafObservations(detected, unknown)];
+      const urls = [.../* @__PURE__ */ new Set([...cmafObservationUrls(notice), ...unknown])];
+      return videos.map((video) => video === notice ? withCmafObservations(notice, urls) : video);
+    }
     if (isKnownVideoSource(videos, detected.baseUrl)) return videos;
     const related = new Set(detected.relatedUrls || []);
-    return [...videos.filter((video) => !related.has(video.baseUrl) && !(video.sourceType === "cmaf" && video.relatedUrls?.some((url) => related.has(url)))), detected];
+    return [...videos.flatMap((video) => {
+      if (isCmafTrackOnlySource(video)) {
+        const observed = cmafObservationUrls(video);
+        const remaining = observed.filter((url) => !related.has(url));
+        if (remaining.length === 0) return [];
+        return [remaining.length === observed.length ? video : withCmafObservations(video, remaining)];
+      }
+      return related.has(video.baseUrl) ? [] : [video];
+    }), detected];
   }
   function playlistResourceUrls(content, playlistUrl) {
     return content.split(/\r?\n/).flatMap((raw) => {
@@ -4497,7 +4672,7 @@ ${streamUrl || ""}`;
         } catch {
         }
       }
-      const streams2 = dashMetadata?.streams || [];
+      const streams2 = (dashMetadata?.streams || []).map(({ videoSegments, audioSegments, ...stream }) => stream);
       return {
         ...await metadata(),
         sourceType,
@@ -4570,6 +4745,8 @@ ${streamUrl || ""}`;
   var videoInfo = /* @__PURE__ */ new Map();
   var processedUrls = /* @__PURE__ */ new Map();
   var detectionContexts = /* @__PURE__ */ new Map();
+  var detectionStorageWrites = /* @__PURE__ */ new Map();
+  var cmafTitleRequests = /* @__PURE__ */ new Map();
   var queue = [];
   var pendingDownloads = /* @__PURE__ */ new Map();
   var pendingFilenamesByUrl = /* @__PURE__ */ new Map();
@@ -4593,6 +4770,36 @@ ${streamUrl || ""}`;
     if (previous && now - previous < URL_CACHE_DURATION) return false;
     processedUrls.set(key, now);
     return true;
+  }
+  function getDetectionContext(tabId) {
+    if (!detectionContexts.has(tabId)) detectionContexts.set(tabId, Symbol());
+    return detectionContexts.get(tabId);
+  }
+  function getDetectedVideos(tabId) {
+    const videos = videoInfo.get(tabId) || [];
+    const normalized = coalesceCmafObservations(videos);
+    if (normalized !== videos) videoInfo.set(tabId, normalized);
+    return normalized;
+  }
+  function resolveCmafPageTitle(tabId, context) {
+    const notice = getDetectedVideos(tabId).find(isCmafTrackOnlySource);
+    if (notice) return Promise.resolve(notice.title);
+    const pending = cmafTitleRequests.get(tabId);
+    if (pending?.context === context) return pending.promise;
+    const promise = resolvePageTitle(tabId);
+    cmafTitleRequests.set(tabId, { context, promise });
+    return promise;
+  }
+  function writeDetectionStorage(tabId, write) {
+    const previous = detectionStorageWrites.get(tabId);
+    const pending = previous ? previous.catch(() => {
+    }).then(write) : Promise.resolve(write());
+    detectionStorageWrites.set(tabId, pending);
+    pending.finally(() => {
+      if (detectionStorageWrites.get(tabId) === pending) detectionStorageWrites.delete(tabId);
+    }).catch(() => {
+    });
+    return pending;
   }
   function createTaskId() {
     return `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
@@ -4743,6 +4950,8 @@ ${streamUrl || ""}`;
     const duplicate = [...tasks.values()].find((task2) => task2.tabId === request.tabId && task2.sourceId === sourceId && ACTIVE_TASK_PHASES.has(task2.phase));
     if (duplicate) return toPublicTask(duplicate);
     const licenseKey = `${LICENSE_STORAGE_PREFIX}${request.tabId}`;
+    await detectionStorageWrites.get(request.tabId)?.catch(() => {
+    });
     const licenseUrl = (await chrome.storage.session.get(licenseKey))[licenseKey];
     const task = {
       taskId,
@@ -4956,10 +5165,14 @@ ${streamUrl || ""}`;
     switch (request.type) {
       case MessageType.GET_VIDEO_INFO: {
         const tabId = request.tabId;
-        if (videoInfo.has(tabId)) return { videos: videoInfo.get(tabId) };
+        if (videoInfo.has(tabId)) return { videos: getDetectedVideos(tabId) };
+        const context = getDetectionContext(tabId);
         const key = `${VIDEO_STORAGE_PREFIX}${tabId}`;
         const stored = await chrome.storage.local.get(key);
-        const videos = stored[key] || [];
+        if (detectionContexts.get(tabId) !== context || videoInfo.has(tabId)) {
+          return { videos: getDetectedVideos(tabId) };
+        }
+        const videos = coalesceCmafObservations(stored[key] || []);
         videoInfo.set(tabId, videos);
         return { videos };
       }
@@ -5039,29 +5252,39 @@ ${streamUrl || ""}`;
       const { url, tabId } = details;
       if (isWidevineLicenseUrl(url)) {
         if (tabId >= 0 && details.method === "POST" && /^https:\/\/([\w-]+\.)*rplay\.live$/.test(details.initiator || "")) {
-          void chrome.storage.session.set({ [`${LICENSE_STORAGE_PREFIX}${tabId}`]: url });
+          const context2 = getDetectionContext(tabId);
+          void writeDetectionStorage(tabId, () => {
+            if (detectionContexts.get(tabId) !== context2) return;
+            return chrome.storage.session.set({ [`${LICENSE_STORAGE_PREFIX}${tabId}`]: url });
+          }).catch(() => {
+          });
         }
         return;
       }
       if (!shouldInspectMediaRequest(details)) return;
-      if (isKnownVideoSource(videoInfo.get(tabId) || [], url) || !shouldProcessUrl(tabId, url)) return;
-      if (!detectionContexts.has(tabId)) detectionContexts.set(tabId, Symbol());
-      const context = detectionContexts.get(tabId);
+      if (isKnownVideoSource(getDetectedVideos(tabId), url) || !shouldProcessUrl(tabId, url)) return;
+      const context = getDetectionContext(tabId);
       setTimeout(async () => {
         try {
-          if (detectionContexts.get(tabId) !== context || isKnownVideoSource(videoInfo.get(tabId) || [], url)) return;
+          if (detectionContexts.get(tabId) !== context || isKnownVideoSource(getDetectedVideos(tabId), url)) return;
           const detected = await inspectVideoSource(url, {
             fetchFn: (input, init = {}) => fetch(input, { ...init, credentials: "include" }),
-            resolveTitle: () => resolvePageTitle(tabId),
+            resolveTitle: () => getRPlaySourceType(url) === "cmaf" ? resolveCmafPageTitle(tabId, context) : resolvePageTitle(tabId),
             now: Date.now
           });
           if (!detected || detectionContexts.get(tabId) !== context) return;
-          const previous = videoInfo.get(tabId) || [];
+          const previous = getDetectedVideos(tabId);
           const list = mergeVideoSources(previous, detected);
           if (list === previous) return;
           videoInfo.set(tabId, list);
-          await chrome.storage.local.set({ [`${VIDEO_STORAGE_PREFIX}${tabId}`]: list });
-          await updateBadge(String(list.length), "#666666", tabId);
+          await writeDetectionStorage(tabId, () => {
+            if (detectionContexts.get(tabId) !== context) return;
+            return chrome.storage.local.set({ [`${VIDEO_STORAGE_PREFIX}${tabId}`]: list });
+          });
+          if (detectionContexts.get(tabId) !== context) return;
+          if (list.length !== previous.length) await updateBadge(String(list.length), "#666666", tabId);
+          if (detectionContexts.get(tabId) !== context) return;
+          if (isCmafTrackOnlySource(detected) && previous.some(isCmafTrackOnlySource)) return;
           broadcast({ type: MessageType.VIDEO_DETECTED, tabId, data: detected });
         } catch (error) {
           console.error("[RPlay] \u68C0\u6D4B\u5A92\u4F53\u5931\u8D25:", error);
@@ -5070,22 +5293,30 @@ ${streamUrl || ""}`;
     },
     { urls: ["*://*.rplay-cdn.com/*", "*://*.rplay.live/*", "https://widevine-dash.ezdrm.com/*"] }
   );
-  function clearTabDetection(tabId) {
-    detectionContexts.delete(tabId);
-    videoInfo.delete(tabId);
+  function clearTabDetection(tabId, { removed = false } = {}) {
+    cmafTitleRequests.delete(tabId);
+    if (removed) {
+      detectionContexts.delete(tabId);
+      videoInfo.delete(tabId);
+    } else {
+      detectionContexts.set(tabId, Symbol());
+      videoInfo.set(tabId, []);
+    }
     for (const key of processedUrls.keys()) {
       if (key.startsWith(`${tabId}:`)) processedUrls.delete(key);
     }
-    chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`).catch(() => {
+    void writeDetectionStorage(tabId, () => Promise.all([
+      chrome.storage.local.remove(`${VIDEO_STORAGE_PREFIX}${tabId}`),
+      chrome.storage.session.remove(`${LICENSE_STORAGE_PREFIX}${tabId}`)
+    ])).catch(() => {
     });
-    chrome.storage.session.remove(`${LICENSE_STORAGE_PREFIX}${tabId}`).catch(() => {
-    });
+    if (!removed) broadcast({ type: MessageType.VIDEO_INFO_CLEARED, tabId });
   }
-  chrome.tabs.onRemoved.addListener(clearTabDetection);
+  chrome.tabs.onRemoved.addListener((tabId) => clearTabDetection(tabId, { removed: true }));
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (!changeInfo.url) return;
+    if (!changeInfo.url && changeInfo.status !== "loading") return;
     clearTabDetection(tabId);
-    void updateBadge("", "#666666", tabId);
+    if (tasks.get(activeTaskId)?.tabId !== tabId) void updateBadge("", "#666666", tabId);
   });
   setInterval(() => {
     const cutoff = Date.now() - 6e4;
